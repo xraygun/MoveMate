@@ -57,7 +57,7 @@ $NoLimit = 4TB   # a drive export carries everything, so nothing is "oversized"
 $script:migIcon = try { New-Object Drawing.Icon (Join-Path $PSScriptRoot 'MoveMate.ico') } catch { $null }
 function P($x, $y) { New-Object Drawing.Point $x, $y }
 function S($w, $h) { New-Object Drawing.Size $w, $h }
-$form = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName  -  this PC: $env:COMPUTERNAME"; ClientSize = (S 905 900); StartPosition = 'CenterScreen'; FormBorderStyle = 'FixedSingle'; MaximizeBox = $false; Font = New-Object Drawing.Font('Segoe UI', 9) }
+$form = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName $MigToolVersion  -  this PC: $env:COMPUTERNAME"; ClientSize = (S 905 900); StartPosition = 'CenterScreen'; FormBorderStyle = 'FixedSingle'; MaximizeBox = $false; Font = New-Object Drawing.Font('Segoe UI', 9) }
 function Add-Ctl([string]$Type, [hashtable]$Props, $Parent = $form) { $c = New-Object "Windows.Forms.$Type" -Property $Props -ErrorAction Stop; $Parent.Controls.Add($c); $c }
 function Add-Head([string]$Text, $y) { [void](Add-Ctl Label @{ Text = $Text; Location = (P 12 $y); AutoSize = $true; Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold) }) }
 
@@ -1465,7 +1465,8 @@ $btnCable.Add_Click({
             $script:hostOn = $true
             $w = Get-SharingProblem; if ($w) { Write-Log "! THIS PC: $w" }
             $lblConn.Font = New-Object Drawing.Font('Segoe UI', 10, [Drawing.FontStyle]::Bold)
-            Write-Log "Access allowed on $env:COMPUTERNAME with code $code (temporary login; removed by Stop allowing access or closing this window)."
+            Write-Log "Temporary admin account '$PairUser' created on this PC (password = the code $code) - deleted by Stop allowing access or closing this window."
+            Write-Log "Access allowed on $env:COMPUTERNAME with code $code."
             Update-ModeUi
             Set-Conn "THIS PC: $env:COMPUTERNAME   CODE: $code     On the other PC: type $env:COMPUTERNAME, click Connect... -> No (code) -> $code" 'DarkGreen'
         } catch { Set-Conn "Allow access failed: $($_.Exception.Message)" 'Firebrick' }
@@ -1529,6 +1530,7 @@ $btnCable.Add_Click({
     $show = if ($auto) { "$code (automatic - only needed if the other PC asks)" } else { "$code  (this PC is also on another network, so it uses a code)" }
     if ($sync.Warn) { Write-Log "! THIS PC: $($sync.Warn) The other PC may not reach this one (working FROM this PC still works)." }
     $lblConn.Font = New-Object Drawing.Font('Segoe UI', 10, [Drawing.FontStyle]::Bold)
+    Write-Log "Temporary admin account '$PairUser' created on this PC for the cable link$(if ($auto) { ' (automatic login - deleted at once if this PC joins another network)' } else { " (password = the code $code)" }) - deleted when the link ends."
     Write-Log "Cable link on $($sync.Nic); this PC is $ip. Login for the other PC: $show"
     $other = $CableAddr[$(if ($role -eq 'Old') { 'New' } else { 'Old' })]
     $ok = $false; $t0 = Get-Date
@@ -1593,6 +1595,55 @@ $inTimer.Add_Tick({
     } elseif ($sess.Count) { $lblStatus.Text = "Other PC connected ($($sess[0].ClientComputerName))" }
 })
 $inTimer.Start()
+
+# Pairing watch, every 4 s (also while copying): the automatic cable login must never exist while this PC is on another
+# network - Wi-Fi reconnecting mid-copy, a second cable. Assert-PairingOffline deletes it then. Starts only once the
+# cable setup has finished ($script:pairCode set), so it never races the setup that creates the login.
+$pairWatch = New-Object Windows.Forms.Timer -Property @{ Interval = 4000 }
+$pairWatch.Add_Tick({
+    if ($script:pairCode -ne $PairAutoCode) { return }
+    $m = Assert-PairingOffline
+    if (-not $m) { return }
+    $script:pairCode = $null
+    Write-Log $m
+    Write-Log '  The other PC can no longer log in to this one (a copy running over the cable may stop). Disconnect the other network (or forget the Wi-Fi), then End cable link and Start cable link again.'
+    Set-Conn 'Temporary login deleted: this PC joined another network. Disconnect it, then End cable link and Start cable link again.' 'Firebrick'
+})
+$pairWatch.Start()
+
+# ---------- Update check: in the background at start (Advanced > Updates, on by default) and 'Check now' there ----------
+# A newer GitHub release makes the Advanced... button blink until Advanced is opened. Offline / blocked: nothing happens.
+$script:update = $null; $script:updJob = $null; $script:blink = $false
+$advBlink = New-Object Windows.Forms.Timer -Property @{ Interval = 600 }
+$advBlink.Add_Tick({
+    $script:blink = -not $script:blink
+    if ($script:blink) { $btnAdv.BackColor = [Drawing.Color]::Gold } else { $btnAdv.BackColor = [Drawing.SystemColors]::Control }
+})
+function Stop-AdvBlink { $advBlink.Stop(); $script:blink = $false; $btnAdv.BackColor = [Drawing.SystemColors]::Control; $btnAdv.UseVisualStyleBackColor = $true }
+function Show-UpdateAvailable($R) {
+    $script:update = $R
+    Write-Log "Update available: $MigToolName $($R.Version) (this copy is $MigToolVersion) - see Advanced... > Updates."
+    $howTips.SetToolTip($btnAdv, "$MigToolName $($R.Version) is available (this copy is $MigToolVersion). Open Advanced... > Updates.")
+    $advBlink.Start()
+}
+$updTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 500 }
+$updTimer.Add_Tick({
+    $j = $script:updJob
+    if (-not $j.H.IsCompleted) {
+        if (((Get-Date) - $j.T0).TotalSeconds -gt 20) { $updTimer.Stop(); try { [void]$j.Ps.BeginStop($null, $null) } catch {} }   # abandon, don't wait
+        return
+    }
+    $updTimer.Stop()
+    $r = try { @($j.Ps.EndInvoke($j.H))[0] } catch { $null }
+    $j.Ps.Dispose()
+    if ($r -and $r.Newer) { Show-UpdateAvailable $r }
+})
+function Start-UpdateCheck {
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript({ param($core) . $core; Get-MigLatestRelease }).AddArgument($script:corePath)
+    $script:updJob = @{ Ps = $ps; H = $ps.BeginInvoke(); T0 = Get-Date }
+    $updTimer.Start()
+}
 
 $btnScan.Add_Click({
     $r = Get-Roots; if (-not $r) { return }
@@ -2447,7 +2498,8 @@ function Move-Printers($r, [string]$RunDir) {
 # ---------- Advanced... ----------
 function Show-Advanced {
     $a = $script:MigAdv
-    $d = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName - Advanced"; ClientSize = (S 640 706); StartPosition = 'CenterParent'; FormBorderStyle = 'FixedDialog'; MaximizeBox = $false; MinimizeBox = $false; Font = $form.Font }
+    Stop-AdvBlink
+    $d = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName - Advanced"; ClientSize = (S 640 772); StartPosition = 'CenterParent'; FormBorderStyle = 'FixedDialog'; MaximizeBox = $false; MinimizeBox = $false; Font = $form.Font }
     $add = { param($c) $d.Controls.Add($c); $c }
     $gray = [Drawing.Color]::DimGray; $bold = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
     $head = { param($t, $y) [void](& $add (New-Object Windows.Forms.Label -Property @{ Text = $t; Location = (P 12 $y); AutoSize = $true; Font = $bold })) }
@@ -2529,13 +2581,39 @@ function Show-Advanced {
         [void][Windows.Forms.MessageBox]::Show("Handoff for $($u.Trim()) cancelled. C:\Migration\$($u.Trim()) is still there - delete it if it isn't needed.", $MigToolName)
     })
 
-    & $head 'Settings' 612
-    $bExp = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Export settings...'; Location = (P 24 636); Size = (S 130 28) })
-    $bImp = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Import settings...'; Location = (P 160 636); Size = (S 130 28) })
-    $bRst = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Reset to defaults'; Location = (P 296 636); Size = (S 130 28) })
-    & $lbl 'Same setup on every stick: export, then import.' 24 670 400 $gray
-    $ok = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'OK'; Location = (P 452 664); Size = (S 84 30) })
-    $no = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Cancel'; Location = (P 542 664); Size = (S 84 30); DialogResult = 'Cancel' })
+    & $head 'Updates' 612
+    $cbUpd = & $add (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Check for updates when MoveMate starts (asks GitHub for the latest release - nothing else is sent)'; Location = (P 24 636); AutoSize = $true; Checked = [bool]$a.CheckUpdates })
+    $bUpd = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Check now'; Location = (P 24 660); Size = (S 100 26) })
+    $lUpd = & $add (New-Object Windows.Forms.LinkLabel -Property @{ Location = (P 132 665); Size = (S 490 18); LinkArea = (New-Object Windows.Forms.LinkArea(0, 0)) })
+    $setUpd = {
+        param($t, $link)
+        $lUpd.Text = $t
+        $lUpd.LinkArea = if ($link) { New-Object Windows.Forms.LinkArea($t.IndexOf($link), $link.Length) } else { New-Object Windows.Forms.LinkArea(0, 0) }
+    }
+    if ($script:update) { & $setUpd "$MigToolName $($script:update.Version) is available (this copy is $MigToolVersion).  Download page" 'Download page' }
+    else { & $setUpd "This copy is $MigToolName $MigToolVersion." $null }
+    $lUpd.Add_LinkClicked({ Start-Process explorer.exe "`"$(if ($script:update.Url) { $script:update.Url } else { "https://github.com/$MigUpdateRepo/releases/latest" })`"" })
+    $bUpd.Add_Click({
+        $bUpd.Enabled = $false
+        $r = Invoke-Bg -Script { param($core) . $core; Get-MigLatestRelease 10 } -TimeoutSec 15 -Status 'Checking for updates'
+        $lblStatus.Text = ''; $bUpd.Enabled = $true
+        $rel = @($r.Output)[0]
+        if ($r.TimedOut) { & $setUpd "No answer from GitHub (offline, or the network blocks it). This copy is $MigToolVersion." $null }
+        elseif (-not $r.Ok -or -not $rel) {
+            $why = if ("$($r.Error)" -match '404') { 'no release is published on GitHub yet' } else { "$($r.Error)" }
+            & $setUpd "Couldn't check: $why. This copy is $MigToolVersion." $null
+        }
+        elseif ($rel.Newer) { $script:update = $rel; & $setUpd "$MigToolName $($rel.Version) is available (this copy is $MigToolVersion).  Download page" 'Download page'; Write-Log "Update available: $MigToolName $($rel.Version) (this copy is $MigToolVersion)." }
+        else { & $setUpd "You have the latest version ($MigToolVersion)." $null }
+    })
+
+    & $head 'Settings' 698
+    $bExp = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Export settings...'; Location = (P 24 722); Size = (S 130 28) })
+    $bImp = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Import settings...'; Location = (P 160 722); Size = (S 130 28) })
+    $bRst = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Reset to defaults'; Location = (P 296 722); Size = (S 130 28) })
+    & $lbl 'Same setup on every stick: export, then import.' 24 754 400 $gray
+    $ok = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'OK'; Location = (P 452 730); Size = (S 84 30) })
+    $no = & $add (New-Object Windows.Forms.Button -Property @{ Text = 'Cancel'; Location = (P 542 730); Size = (S 84 30); DialogResult = 'Cancel' })
     $d.CancelButton = $no
     $bExp.Add_Click({
         Save-Settings
@@ -2567,7 +2645,7 @@ function Show-Advanced {
     $a.Threads = [int]$nThr.Value; $a.LimitMBps = [int]$nLim.Value; $a.Compress = $cbComp.Checked; $a.Retries = [int]$nRet.Value; $a.WaitSec = [int]$nWait.Value
     $a.Verify = $cbVer.Checked; $a.ExcludeFiles = $tXf.Text.Trim(); $a.ExcludeFolders = $tXd.Text.Trim(); $a.SkipOlderYears = [int]$nAge.Value
     $a.ExtraFolders = @($tEx.Lines | ForEach-Object { $_.Trim().TrimEnd('\') } | Where-Object { $_ })
-    $a.Installers = $cbInst.Checked
+    $a.Installers = $cbInst.Checked; $a.CheckUpdates = $cbUpd.Checked
     $btnInst.Visible = [bool]$a.Installers
     Save-Settings
     $on = @()
@@ -3094,4 +3172,5 @@ if (Test-Path $unsentFile) { Write-Log "$(@(Get-Content $unsentFile).Count) repo
 Update-ModeUi
 if ($SourceRoot -and $DestRoot) { Set-Conn "TEST MODE: $SourceRoot -> $DestRoot" }
 if ($StartCable) { $form.Add_Shown({ $script:cableResume = $true; $btnCable.PerformClick() }) }
+if ($MigAdv.CheckUpdates -and -not ($SourceRoot -and $DestRoot)) { $form.Add_Shown({ Start-UpdateCheck }) }
 [void]$form.ShowDialog()

@@ -45,6 +45,10 @@ No network between the PCs - one Ethernet cable straight between them.
 What changes while the link is on: the Ethernet adapter gets a temporary address, file sharing is turned on and a
 temporary login is made so the other PC can connect. All of it is undone when you end the link, Cancel/Reset, or
 restart the PC - the address is never saved, and a start-up task removes the login and sharing change by itself.
+The log at the bottom of the window says when the temporary login (a local admin account named KitMigrate) is created
+and when it is deleted. The automatic login (no code to type) is only used while the PC is on no other network: if it
+joins one while the link is on (e.g. Wi-Fi reconnects), MoveMate deletes that login within seconds and says so in the
+log. Then disconnect that network, End cable link and Start cable link again.
 Reopening the tool after a crash offers to continue or undo.
 When nothing is running, the Cancel button says Reset: undo the link and start again from step 1.
 
@@ -164,7 +168,15 @@ Preview shows sizes, large files and free space first.
 - Installers: shows the Installers button (see Installers).
 - Clean up this PC: open or delete C:\Migration-Incoming (download leftovers), C:\Migration-Oversized,
   C:\Migration-Keys (restore keys - those uploads can't be opened without them), kept logs; cancel a waiting handoff.
+- Updates: see Updates.
 - Settings: export, import, reset to defaults.
+
+== Updates ==
+Advanced > Updates. 'Check for updates when MoveMate starts' (on by default) asks GitHub for the latest MoveMate
+release in the background - nothing about this PC or its users is sent. When a newer version is out, the Advanced...
+button blinks and the log says so; open Advanced to stop the blinking and click 'Download page'. 'Check now' asks
+right away. Offline, on a cable or when the network blocks GitHub, nothing happens. Updating = download the new zip
+and replace the MoveMate folder (keep logs\, keys\, extras\installers.csv and scripts\migrate-settings.json).
 
 == Installers ==
 Turn it on in Advanced. The Installers button (top) lists your programs from extras\installers.csv:

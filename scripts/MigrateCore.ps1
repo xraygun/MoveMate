@@ -6,6 +6,8 @@
 # Where the tool installs on a PC (relative to the drive root) and its scheduled task names - change here only.
 # Legacy: older versions used the names below; they're still recognized so pending handoffs keep working.
 $MigToolName = 'MoveMate'   # shown in instructions/messages (the launcher is "<name>.cmd")
+$MigToolVersion = '1.0.0'   # this copy's version - bump it with each GitHub release (tag v1.0.0); the update check compares to it
+$MigUpdateRepo = 'xraygun/MoveMate'   # GitHub owner/repo the update check asks for its latest release
 $MigToolRel = 'Program Files\MoveMate'
 $MigLegacyToolRel = 'Program Files\MoveMate'
 $HandoffTask = 'MigrateUserFiles-Handoff'
@@ -27,7 +29,7 @@ $MigJunk = 'desktop.ini', 'Thumbs.db', '~$*', '*.tmp'
 # ---------- Advanced options ("Advanced..." in the window). Saved in migrate-settings.json -> "Advanced" and read HERE,
 # so background jobs (which load this file on their own) use the same options. Import-MigAdvanced re-reads them.
 $MigAdvDefaults = [ordered]@{ Threads = 8; Retries = 1; WaitSec = 1; LimitMBps = 0; Compress = $false; ExcludeFiles = ''; ExcludeFolders = ''
-    SkipOlderYears = 0; Verify = $false; ExtraFolders = @(); Installers = $false }
+    SkipOlderYears = 0; Verify = $false; ExtraFolders = @(); Installers = $false; CheckUpdates = $true }
 function Import-MigAdvanced {
     $a = [ordered]@{}; foreach ($k in $MigAdvDefaults.Keys) { $a[$k] = $MigAdvDefaults[$k] }
     try {
@@ -993,6 +995,16 @@ function Get-PairPassword([string]$Code) { "KitPair-$Code-TempCable!" }
 $PairAutoCode = 'AUTO'
 # Is this PC on any real network (a default gateway on any adapter)? Then a fixed password would be exposed there.
 function Test-OnNetwork { [bool](Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -ne '0.0.0.0' }) }
+# Same question, fast (.NET, no CIM) for the pairing watch that asks every few seconds: the name of an adapter that is
+# up with an IPv4 default gateway, or $null. The cable adapter itself never has a gateway.
+function Get-GatewayAdapter {
+    foreach ($n in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        if ($n.OperationalStatus -ne 'Up') { continue }
+        $gw = @($n.GetIPProperties().GatewayAddresses | Where-Object { $_.Address.AddressFamily -eq 'InterNetwork' -and "$($_.Address)" -ne '0.0.0.0' })
+        if ($gw.Count) { return $n.Name }
+    }
+    $null
+}
 
 # -Auto: use the fixed cable code ONLY if this PC is on no other network; otherwise a random 4-character code.
 function Start-PairingHost([switch]$Auto) {
@@ -1005,7 +1017,7 @@ function Start-PairingHost([switch]$Auto) {
     $old = (Get-ItemProperty $PairPolicyKey -ErrorAction SilentlyContinue).LocalAccountTokenFilterPolicy
     $fw = @(Get-NetFirewallRule -Group '@FirewallAPI.dll,-28502' -Direction Inbound -ErrorAction SilentlyContinue | Where-Object { "$($_.Enabled)" -eq 'False' } | ForEach-Object Name)
     New-Item -ItemType Directory -Force (Split-Path $PairState) | Out-Null
-    [ordered]@{ PolicyOld = $old; Firewall = $fw; Created = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $PairState -Encoding UTF8   # before changing anything
+    [ordered]@{ PolicyOld = $old; Firewall = $fw; Created = (Get-Date).ToString('s'); Auto = ($code -eq $PairAutoCode) } | ConvertTo-Json | Set-Content $PairState -Encoding UTF8   # before changing anything
     try {
         # Login first, file-sharing port LAST: when the other PC can reach port 445 here, this PC is fully ready.
         Set-ItemProperty $PairPolicyKey -Name LocalAccountTokenFilterPolicy -Value 1 -Type DWord
@@ -1054,7 +1066,34 @@ function Stop-PairingHost {
     else { Set-ItemProperty $PairPolicyKey -Name LocalAccountTokenFilterPolicy -Value ([int]$s.PolicyOld) -Type DWord }
     foreach ($n in @($s.Firewall)) { if ($n) { Disable-NetFirewallRule -Name $n -ErrorAction SilentlyContinue } }
     [IO.File]::Delete($PairState)
-    'Pairing removed (temporary account deleted, settings restored).'
+    "Temporary admin account '$PairUser' deleted from this PC; sharing settings restored."
+}
+
+# Safety net for the AUTOMATIC cable login (its password is fixed and published with the source): if this PC joins any
+# other network while that login exists (e.g. Wi-Fi reconnects mid-copy), delete it at once and drop every session of
+# it that is not from the cable peer. Random-code logins (Allow access on a network) are left alone - they are meant
+# for a network. Returns a line for the log when it acted, else $null.
+function Assert-PairingOffline {
+    if (-not (Test-Path $PairState)) { return $null }
+    try { $s = Get-Content $PairState -Raw | ConvertFrom-Json } catch { return $null }
+    if (-not $s.Auto) { return $null }
+    $net = Get-GatewayAdapter
+    if (-not $net) { return $null }
+    Get-SmbSession -ErrorAction SilentlyContinue | Where-Object { $_.ClientUserName -match "\\$PairUser$" -and $_.ClientComputerName -notlike '10.99.99.*' } |
+        Close-SmbSession -Force -ErrorAction SilentlyContinue
+    "! This PC joined a network ('$net') while the automatic cable login was on. $(Stop-PairingHost)"
+}
+
+# ---------- Update check: asks GitHub for the latest release of $MigUpdateRepo (nothing about this PC is sent) ----------
+# Returns @{ Version; Tag; Url; Newer }. Throws when GitHub can't be reached or no release is published (404).
+function Get-MigLatestRelease([int]$TimeoutSec = 8) {
+    # Windows PowerShell 5.1 may still offer only TLS 1.0/1.1, which GitHub refuses
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$MigUpdateRepo/releases/latest" -TimeoutSec $TimeoutSec -UseBasicParsing `
+        -Headers @{ 'User-Agent' = "$MigToolName/$MigToolVersion"; Accept = 'application/vnd.github+json' }
+    if ("$($r.tag_name)" -notmatch '\d+(\.\d+){1,3}') { throw "Unexpected release tag '$($r.tag_name)'." }
+    $v = [version]$Matches[0]
+    @{ Version = $v; Tag = "$($r.tag_name)"; Url = "$($r.html_url)"; Newer = ($v -gt [version]$MigToolVersion) }
 }
 
 # Leftovers of the retired "Open Transfer Share" window (share KitMigrate$, firewall rules, token policy; state.json).
