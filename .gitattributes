@@ -1,2 +1,6 @@
 # Keep files byte-for-byte (UTF-8 BOM and line endings matter to Windows PowerShell 5.1)
 * -text
+
+# Leave repo-only files out of release zips and "Download ZIP"
+.gitattributes export-ignore
+.gitignore export-ignore
