@@ -29,10 +29,21 @@ These are plain PowerShell scripts - read them before you run them.
 person's Migration Reports folder with each report it sends - double-click it there for stats and charts. It works
 offline and nothing leaves the browser.
 
-## Privacy
+## Updates
+
+MoveMate checks GitHub for a newer release when it starts. Nothing about the PC or its users is sent. When one is out,
+the **Advanced...** button blinks; **Advanced > Updates** has the download link and a **Check now** button. Untick
+"Check for updates when MoveMate starts" there to turn it off.
+
+## Privacy and security
 
 Logs are written to `MoveMate\logs`. They list users' file names, so don't share that folder. Restore keys for
 encrypted uploads are saved in `MoveMate\keys` - keep them private.
+
+Direct cable mode creates a temporary local admin account (`KitMigrate`) so the two PCs can log in to each other, and
+the log at the bottom of the window records when it is created and deleted. With no other network present, it uses a
+fixed password so nothing needs typing. If the PC joins any other network while that account exists, MoveMate deletes
+it within seconds. Everything is undone when the link ends, or at the next restart after a crash.
 
 ## Layout
 
