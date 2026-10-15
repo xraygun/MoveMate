@@ -1,0 +1,8 @@
+﻿"Name","Url","File","Args","Match","Notes"
+"Ninite (many apps in one installer)","https://ninite.com/","","","","Pick apps on the site. Save the installer to MoveMate\extras\installers to skip downloading"
+"Google Chrome","https://chromeenterprise.google/download/","","/qn","Google Chrome","MSI. Save the installer to MoveMate\extras\installers to skip downloading"
+"Mozilla Firefox","https://www.mozilla.org/firefox/enterprise/","","/qn","Mozilla Firefox*","MSI. Save the installer to MoveMate\extras\installers to skip downloading"
+"Adobe Acrobat Reader","https://get.adobe.com/reader/enterprise/","","/sAll /rs","Adobe Acrobat*","Save the installer to MoveMate\extras\installers to skip downloading"
+"7-Zip","https://www.7-zip.org/download.html","","/S","7-Zip*","Save the installer to MoveMate\extras\installers to skip downloading"
+"VLC media player","https://www.videolan.org/vlc/download-windows.html","","/S","VLC media player","Save the installer to MoveMate\extras\installers to skip downloading"
+"Kyocera print driver / installer","https://www.kyoceradocumentsolutions.us/en/support/downloads.html","","","Kyocera*","Finds the printer on the network. Save the installer to MoveMate\extras\installers to skip downloading"

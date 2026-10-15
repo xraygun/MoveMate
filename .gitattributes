@@ -1,0 +1,2 @@
+# Keep files byte-for-byte (UTF-8 BOM and line endings matter to Windows PowerShell 5.1)
+* -text

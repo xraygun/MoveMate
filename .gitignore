@@ -1,0 +1,11 @@
+# Created when MoveMate runs - never commit these (they hold user file names, settings and restore keys)
+logs/
+keys/
+scripts/migrate-settings.json
+*.key
+Restore *.cmd
+MigrationStats*.csv
+
+# Local installer files (keep the folder README)
+extras/installers/*
+!extras/installers/README.txt
