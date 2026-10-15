@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration Dashboard</title>
+<!--
+  Migration Dashboard - reads MigrationStats.csv written by MoveMate. Works offline: no libraries, no internet.
+  Data: MigrationStats.js next to this file (written by the tool with each report) loads automatically; or drop / open
+  any MigrationStats.csv. Nothing is uploaded anywhere - everything stays in this browser.
+-->
+<style>
+  :root {
+    --bg: #f4f6fb; --bg2: #e9edf6; --card: #ffffff; --line: #e3e7ef; --text: #172033; --muted: #66708a;
+    --accent: #4f46e5; --accent2: #0ea5e9; --good: #10b981; --warn: #f59e0b; --bad: #ef4444;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.06);
+    --grid: #edf0f6; --chip: #eef0fb;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1020; --bg2: #11182c; --card: #141c33; --line: #232d4a; --text: #e7ebf5; --muted: #8d97b5;
+      --accent: #818cf8; --accent2: #38bdf8; --good: #34d399; --warn: #fbbf24; --bad: #f87171;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); --grid: #1c2540; --chip: #1d2645;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1020; --bg2: #11182c; --card: #141c33; --line: #232d4a; --text: #e7ebf5; --muted: #8d97b5;
+    --accent: #818cf8; --accent2: #38bdf8; --good: #34d399; --warn: #fbbf24; --bad: #f87171;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); --grid: #1c2540; --chip: #1d2645;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+         background: radial-gradient(1200px 500px at 10% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent),
+                     radial-gradient(900px 400px at 100% 0%, color-mix(in srgb, var(--accent2) 12%, transparent), transparent), var(--bg);
+         color: var(--text); min-height: 100vh; }
+  header { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(10px);
+           background: color-mix(in srgb, var(--bg) 78%, transparent); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1400px; margin: 0 auto; padding: 12px 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .logo { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2));
+          display: grid; place-items: center; color: #fff; font-weight: 700; box-shadow: var(--shadow); }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  main { max-width: 1400px; margin: 0 auto; padding: 18px 20px 40px; }
+  .btn, select, input[type=date], input[type=search] {
+    font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 7px 11px; outline: none; }
+  .btn { cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  select:focus, input:focus, .btn:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+  .seg button { font: inherit; border: 0; background: transparent; color: var(--muted); padding: 7px 10px; cursor: pointer; }
+  .seg button.on { background: var(--chip); color: var(--text); font-weight: 600; }
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  .filters label { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+  .kpi { padding: 14px 16px; position: relative; overflow: hidden; }
+  .kpi .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .kpi .v { font-size: 26px; font-weight: 700; margin-top: 4px; letter-spacing: -.3px; }
+  .kpi .d { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi::after { content: ""; position: absolute; right: -30px; top: -30px; width: 90px; height: 90px; border-radius: 50%;
+                background: color-mix(in srgb, var(--c, var(--accent)) 14%, transparent); }
+  .kpi.star { background: linear-gradient(135deg, color-mix(in srgb, var(--warn) 18%, var(--card)), var(--card)); }
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+  .panel { padding: 14px 16px 16px; min-width: 0; }
+  .panel h2 { font-size: 14px; margin: 0 0 2px; }
+  .panel .hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .phead { display: flex; gap: 8px; align-items: flex-start; }
+  .c4 { grid-column: span 4; } .c5 { grid-column: span 5; } .c6 { grid-column: span 6; } .c7 { grid-column: span 7; } .c8 { grid-column: span 8; } .c12 { grid-column: span 12; }
+  @media (max-width: 1100px) { .c4, .c5, .c6, .c7, .c8 { grid-column: span 12; } }
+  svg text { fill: var(--muted); font-size: 11px; }
+  .donutwrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .legend { display: grid; gap: 6px; font-size: 12px; min-width: 160px; flex: 1; }
+  .legend div { display: flex; align-items: center; gap: 8px; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .legend .val { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--card); cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; }
+  th:hover { color: var(--text); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--bg2); }
+  .tablewrap { overflow: auto; max-height: 520px; border-radius: 10px; border: 1px solid var(--line); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--chip); }
+  .pill.ok { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .lb { display: grid; gap: 8px; }
+  .lbrow { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 12px; background: var(--bg2); }
+  .rank { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; background: var(--muted); }
+  .r1 { background: linear-gradient(135deg, #f59e0b, #fbbf24); } .r2 { background: linear-gradient(135deg, #94a3b8, #cbd5e1); } .r3 { background: linear-gradient(135deg, #b45309, #d97706); }
+  .lbrow small { color: var(--muted); }
+  .cols { display: none; position: absolute; right: 16px; top: 46px; z-index: 4; padding: 10px; max-height: 360px; overflow: auto; width: 280px; }
+  .cols.open { display: block; }
+  .cols label { display: flex; gap: 8px; padding: 3px 4px; font-size: 12.5px; cursor: pointer; }
+  #drop { display: none; position: fixed; inset: 0; z-index: 20; background: color-mix(in srgb, var(--accent) 22%, transparent);
+          border: 3px dashed var(--accent); place-items: center; font-size: 22px; font-weight: 600; }
+  #drop.on { display: grid; }
+  #welcome { padding: 40px; text-align: center; }
+  #welcome .big { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .tip { position: fixed; pointer-events: none; z-index: 30; background: var(--text); color: var(--bg); padding: 6px 9px; border-radius: 8px;
+         font-size: 12px; opacity: 0; transition: opacity .1s; max-width: 280px; }
+  .muted { color: var(--muted); }
+</style>
+<script src="MigrationStats.js" onerror="window.MIGRATION_CSV_MISSING = true"></script>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo">M</div>
+    <div><h1>Migration Dashboard</h1><div class="sub" id="source">No data loaded</div></div>
+    <div class="spacer"></div>
+    <button class="btn" id="openBtn" title="Open a MigrationStats.csv (or drop one anywhere on this page)">&#128194; Open CSV</button>
+    <input type="file" id="file" accept=".csv,text/csv" hidden>
+    <div class="seg" id="theme" title="Theme">
+      <button data-t="light">&#9728; Light</button><button data-t="auto">Auto</button><button data-t="dark">&#9790; Dark</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="card" id="welcome">
+    <div class="big">Drop MigrationStats.csv here</div>
+    <div class="muted">or click <b>Open CSV</b>. It loads by itself when this page sits next to the tool's
+      <b>MigrationStats.js</b> (in your <i>Migration Reports</i> folder). Nothing leaves this computer.</div>
+  </div>
+
+  <div id="app" hidden>
+    <div class="filters">
+      <label>From <input type="date" id="fFrom"></label>
+      <label>To <input type="date" id="fTo"></label>
+      <label>Method <select id="fMethod"><option value="">All</option></select></label>
+      <label>Result <select id="fResult"><option value="">All</option></select></label>
+      <input type="search" id="fText" placeholder="Search PC, user, tech..." style="min-width:220px">
+      <button class="btn" id="fClear">Clear filters</button>
+      <span class="spacer"></span>
+      <span class="muted" id="count"></span>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="grid">
+      <section class="card panel c6">
+        <div class="phead"><div><h2>Data by file type</h2><div class="hint" id="typeHint">What kind of files were moved</div></div><span class="spacer"></span>
+          <div class="seg" id="typeUnit"><button data-u="GB" class="on">GB</button><button data-u="Files">Files</button></div></div>
+        <div id="chType"></div>
+      </section>
+      <section class="card panel c6">
+        <h2>Data by folder</h2><div class="hint" id="folderHint">Where the data lived on the old PC (GB)</div>
+        <div id="chFolder"></div>
+      </section>
+
+      <section class="card panel c8">
+        <h2>Speed per transfer</h2><div class="hint">Average vs peak, megabits per second</div>
+        <div id="chSpeed"></div>
+      </section>
+      <section class="card panel c4">
+        <h2>Largest file leaderboard</h2><div class="hint">Kudos to the biggest single files moved</div>
+        <div id="lb" class="lb"></div>
+      </section>
+
+      <section class="card panel c8">
+        <h2>Data moved per month</h2><div class="hint">GB, stacked by method</div>
+        <div id="chMonth"></div>
+      </section>
+      <section class="card panel c4">
+        <h2>Transfer method</h2><div class="hint">Number of transfers</div>
+        <div id="chMethod"></div>
+      </section>
+
+      <section class="card panel c12">
+        <div class="phead"><div><h2>Chart builder</h2><div class="hint">Pick any number column, how to group it, and how to show it</div></div></div>
+        <div class="filters" style="margin:6px 0 10px">
+          <label>Column <select id="bCol"></select></label>
+          <label>Group by <select id="bGroup">
+            <option value="run">Each transfer</option><option value="month">Month</option><option value="Method">Method</option>
+            <option value="Mode">Mode</option><option value="FromPC">Old PC</option><option value="ToPC">New PC</option>
+            <option value="Operator">Tech</option><option value="Layout">Layout</option><option value="OldPCModel">Old PC model</option>
+            <option value="NewPCModel">New PC model</option><option value="LinkSpeed">Link speed</option></select></label>
+          <label>Combine <select id="bAgg"><option value="sum">Sum</option><option value="avg">Average</option><option value="max">Max</option><option value="min">Min</option><option value="count">Count</option></select></label>
+          <div class="seg" id="bType"><button data-c="bar" class="on">Bar</button><button data-c="line">Line</button><button data-c="donut">Donut</button></div>
+        </div>
+        <div id="chBuild"></div>
+      </section>
+
+      <section class="card panel c12" style="position:relative">
+        <div class="phead"><div><h2>Transfers</h2><div class="hint">Click a header to sort</div></div><span class="spacer"></span>
+          <button class="btn" id="colsBtn">&#9776; Columns</button><button class="btn" id="exportBtn">&#8681; Export shown</button></div>
+        <div class="card cols" id="colsMenu"></div>
+        <div class="tablewrap" style="margin-top:10px"><table id="tbl"></table></div>
+      </section>
+    </div>
+  </div>
+</main>
+<div id="drop">Drop MigrationStats.csv</div>
+<div class="tip" id="tip"></div>
+
+<script>
+'use strict';
+// ---------- storage (may be blocked: always wrapped) ----------
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('migdash.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('migdash.' + k, JSON.stringify(v)); } catch {} }
+};
+
+// ---------- theme ----------
+function setTheme(t) {
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  document.querySelectorAll('#theme button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  store.set('theme', t);
+}
+document.querySelectorAll('#theme button').forEach(b => b.onclick = () => { setTheme(b.dataset.t); render(); });
+setTheme(store.get('theme', 'auto'));
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => render());
+
+// ---------- CSV ----------
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');   // Excel may save bare CR line breaks
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  const head = (rows.shift() || []).map(h => h.trim());
+  return rows.filter(r => r.some(x => x !== '')).map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] ?? '').trim()])));
+}
+const num = v => { if (v == null || v === '') return null; const n = Number(String(v).replace(/,/g, '')); return isFinite(n) ? n : null; };
+function parseDate(s) {
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);           // tool format
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);           // Excel re-save (M/D/YYYY)
+  if (m) return new Date(+m[3], +m[1] - 1, +m[2], +(m[4] || 0), +(m[5] || 0));
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+// Normalise: dates, megabits for older rows that only have MB/s
+function prepare(rows) {
+  return rows.map(r => {
+    r._date = parseDate(r.Date);
+    if (num(r.AvgMbit_s) == null && num(r.AvgMBps) != null) r.AvgMbit_s = String(+(num(r.AvgMBps) * 8.388608).toFixed(1));
+    if (num(r.PeakMbit_s) == null && num(r.PeakMBps) != null) r.PeakMbit_s = String(+(num(r.PeakMBps) * 8.388608).toFixed(1));
+    return r;
+  }).sort((a, b) => (a._date || 0) - (b._date || 0));
+}
+
+// ---------- state ----------
+let ALL = [], COLS = [], NUMCOLS = [];
+let typeUnit = 'GB', buildType = store.get('bType', 'bar'), sortCol = 'Date', sortDir = -1;
+const defaultCols = ['Date', 'Result', 'Method', 'FromPC', 'ToPC', 'Profiles', 'Files', 'DataGB', 'TransferTime', 'AvgMbit_s', 'PeakMbit_s', 'LargestFileMB', 'LargestFileUser'];
+
+function load(text, label) {
+  ALL = prepare(parseCSV(text));
+  if (!ALL.length) { alert('No rows found in that file.'); return; }
+  COLS = Object.keys(ALL[0]).filter(c => !c.startsWith('_'));
+  NUMCOLS = COLS.filter(c => !['Date', 'TransferTime', 'RunFolder'].includes(c) && ALL.some(r => num(r[c]) != null) && ALL.every(r => r[c] === '' || num(r[c]) != null));
+  document.getElementById('source').textContent = `${label} - ${ALL.length} transfer${ALL.length === 1 ? '' : 's'}`;
+  document.getElementById('welcome').hidden = true; document.getElementById('app').hidden = false;
+  const fill = (id, key) => { const s = document.getElementById(id); const cur = s.value;
+    s.innerHTML = '<option value="">All</option>' + [...new Set(ALL.map(r => r[key]).filter(Boolean))].sort().map(v => `<option>${esc(v)}</option>`).join(''); s.value = cur; };
+  fill('fMethod', 'Method'); fill('fResult', 'Result');
+  const b = document.getElementById('bCol'); const prev = b.value || store.get('bCol', 'DataGB');
+  b.innerHTML = NUMCOLS.map(c => `<option>${esc(c)}</option>`).join(''); b.value = NUMCOLS.includes(prev) ? prev : NUMCOLS[0];
+  buildColsMenu(); render();
+}
+
+// ---------- helpers ----------
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (n, d = 1) => n == null ? '-' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n).toLocaleString() : (+n.toFixed(d)).toLocaleString();
+const gb = n => n == null ? '-' : n >= 1024 ? (n / 1024).toFixed(2) + ' TB' : n >= 1 ? n.toFixed(2) + ' GB' : (n * 1024).toFixed(0) + ' MB';
+const sum = (rows, c) => rows.reduce((a, r) => a + (num(r[c]) || 0), 0);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const PALETTE = () => [css('--accent'), css('--accent2'), '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#ec4899', '#84cc16', '#64748b'];
+// "Oct 9 · D6GY": date + the new PC's last name part (short enough for chart labels)
+const runLabel = r => `${r._date ? r._date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : r.Date} · ${String(r.ToPC || '').split('-').pop()}`;
+
+function filtered() {
+  const f = document.getElementById('fFrom').value, t = document.getElementById('fTo').value;
+  const m = document.getElementById('fMethod').value, res = document.getElementById('fResult').value;
+  const q = document.getElementById('fText').value.trim().toLowerCase();
+  return ALL.filter(r => {
+    if (f && r._date && r._date < new Date(f)) return false;
+    if (t && r._date && r._date > new Date(t + 'T23:59:59')) return false;
+    if (m && r.Method !== m) return false;
+    if (res && r.Result !== res) return false;
+    if (q && ![r.FromPC, r.ToPC, r.Profiles, r.Operator, r.LargestFileUser, r.OldPCModel, r.NewPCModel].join(' ').toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+// ---------- tooltip ----------
+const tip = document.getElementById('tip');
+document.addEventListener('mousemove', e => {
+  const el = e.target.closest('[data-tip]');
+  if (!el) { tip.style.opacity = 0; return; }
+  tip.innerHTML = el.dataset.tip; tip.style.opacity = 1;
+  const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + 'px'; tip.style.top = (e.clientY + 14) + 'px';
+});
+
+// ---------- charts (plain SVG) ----------
+function donut(el, items, fmtv) {
+  items = items.filter(i => i.value > 0);
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (!total) { el.innerHTML = '<div class="empty">No data for this yet</div>'; return; }
+  const pal = PALETTE(), R = 70, r = 46, cx = 80, cy = 80; let a0 = -Math.PI / 2, paths = '';
+  items.forEach((it, i) => {
+    const frac = it.value / total, a1 = a0 + frac * Math.PI * 2, big = frac > .5 ? 1 : 0, col = pal[i % pal.length];
+    const p = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
+    const [x0, y0] = p(R, a0), [x1, y1] = p(R, a1), [x2, y2] = p(r, a1), [x3, y3] = p(r, a0);
+    const d = frac >= .9999 ? `M${cx - R},${cy}a${R},${R} 0 1,0 ${2 * R},0a${R},${R} 0 1,0 ${-2 * R},0M${cx - r},${cy}a${r},${r} 0 1,1 ${2 * r},0a${r},${r} 0 1,1 ${-2 * r},0`
+      : `M${x0},${y0}A${R},${R} 0 ${big},1 ${x1},${y1}L${x2},${y2}A${r},${r} 0 ${big},0 ${x3},${y3}Z`;
+    paths += `<path d="${d}" fill="${col}" fill-rule="evenodd" data-tip="<b>${esc(it.label)}</b><br>${fmtv(it.value)} (${(frac * 100).toFixed(1)}%)" style="cursor:pointer"/>`;
+    it.col = col; a0 = a1;
+  });
+  el.innerHTML = `<div class="donutwrap"><svg viewBox="0 0 160 160" width="170" height="170">${paths}
+      <text x="80" y="76" text-anchor="middle" style="font-size:12px">total</text>
+      <text x="80" y="95" text-anchor="middle" style="font-size:15px;font-weight:700;fill:var(--text)">${esc(fmtv(total))}</text></svg>
+    <div class="legend">${items.map(it => `<div><span class="sw" style="background:${it.col}"></span>${esc(it.label)}<span class="val">${esc(fmtv(it.value))} &middot; ${(it.value / total * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`;
+}
+
+// series: [{name, values:[]}], labels: [] ; opts: {stacked, line, fmt}
+function chart(el, labels, series, opts = {}) {
+  const f = opts.fmt || (v => fmt(v));
+  if (!labels.length || series.every(s => s.values.every(v => !v))) { el.innerHTML = '<div class="empty">No data for this yet</div>'; return; }
+  const W = Math.max(560, el.clientWidth || 560), H = 260, L = 52, B = 46, T = 12, Rp = 12, pw = W - L - Rp, ph = H - T - B;
+  const pal = PALETTE();
+  const totals = labels.map((_, i) => opts.stacked ? series.reduce((a, s) => a + (s.values[i] || 0), 0) : Math.max(...series.map(s => s.values[i] || 0)));
+  let max = Math.max(...totals, 0); if (!max) max = 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(max))), nice = [1, 2, 2.5, 5, 10].map(m => m * pow).find(s => max / s <= 5) || pow * 10;
+  max = Math.ceil(max / nice) * nice;
+  let g = '';
+  for (let v = 0; v <= max + 1e-9; v += nice) { const y = T + ph - v / max * ph; g += `<line x1="${L}" x2="${W - Rp}" y1="${y}" y2="${y}" stroke="var(--grid)"/><text x="${L - 6}" y="${y + 4}" text-anchor="end">${f(v)}</text>`; }
+  const n = labels.length, slot = pw / n, every = Math.ceil(n / Math.max(1, Math.floor(pw / 70)));
+  labels.forEach((lab, i) => { if (i % every === 0) g += `<text x="${L + slot * i + slot / 2}" y="${H - B + 16}" text-anchor="middle">${esc(String(lab).slice(0, 16))}</text>`; });
+  if (opts.line) {
+    series.forEach((s, si) => {
+      const col = pal[si % pal.length];
+      const pts = s.values.map((v, i) => [L + slot * i + slot / 2, T + ph - (v || 0) / max * ph]);
+      const area = `M${pts[0][0]},${T + ph}` + pts.map(p => `L${p[0]},${p[1]}`).join('') + `L${pts[pts.length - 1][0]},${T + ph}Z`;
+      g += `<path d="${area}" fill="${col}" opacity=".12"/><polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`;
+      pts.forEach((p, i) => g += `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="${col}" stroke="var(--card)" stroke-width="2" data-tip="<b>${esc(labels[i])}</b><br>${esc(s.name)}: ${esc(f(s.values[i] || 0))}"/>`);
+    });
+  } else {
+    const groups = opts.stacked ? 1 : series.length, bw = Math.min(46, slot * .7 / groups);
+    labels.forEach((lab, i) => {
+      let acc = 0;
+      series.forEach((s, si) => {
+        const v = s.values[i] || 0, h = v / max * ph, col = pal[si % pal.length];
+        const x = L + slot * i + (slot - bw * groups) / 2 + (opts.stacked ? 0 : si * bw), y = T + ph - h - (opts.stacked ? acc / max * ph : 0);
+        if (v) g += `<rect x="${x}" y="${y}" width="${Math.max(1, bw - 3)}" height="${h}" rx="4" fill="${col}" data-tip="<b>${esc(lab)}</b><br>${esc(s.name)}: ${esc(f(v))}" style="cursor:pointer"/>`;
+        if (opts.stacked) acc += v;
+      });
+    });
+  }
+  const leg = series.length > 1 ? `<div class="legend" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px">${series.map((s, i) => `<div><span class="sw" style="background:${pal[i % pal.length]}"></span>${esc(s.name)}</div>`).join('')}</div>` : '';
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none">${g}</svg>${leg}`;
+}
+
+// ---------- render ----------
+function render() {
+  if (!ALL.length) return;
+  const rows = filtered();
+  document.getElementById('count').textContent = `${rows.length} of ${ALL.length} transfers`;
+
+  // KPIs
+  const users = new Set(rows.flatMap(r => (r.Profiles || '').split(';').map(s => s.trim()).filter(Boolean)));
+  const ok = rows.filter(r => r.Result === 'OK').length;
+  const speeds = rows.map(r => num(r.AvgMbit_s)).filter(v => v != null);
+  const peak = rows.reduce((b, r) => (num(r.PeakMbit_s) || 0) > (num(b?.PeakMbit_s) || 0) ? r : b, null);
+  const big = rows.reduce((b, r) => (num(r.LargestFileMB) || 0) > (num(b?.LargestFileMB) || 0) ? r : b, null);
+  const secs = sum(rows, 'Seconds');
+  const k = (label, v, d, c, cls = '') => `<div class="card kpi ${cls}" style="--c:${c}"><div class="k">${label}</div><div class="v">${v}</div><div class="d" title="${esc(d)}">${d}</div></div>`;
+  document.getElementById('kpis').innerHTML =
+    k('Transfers', rows.length, `${ok} OK &middot; ${rows.length - ok} with problems`, css('--accent')) +
+    k('Users moved', users.size, [...users].slice(0, 4).join(', ') + (users.size > 4 ? '...' : ''), css('--accent2')) +
+    k('Files', fmt(sum(rows, 'Files'), 0), `${fmt(sum(rows, 'SkippedFiles'), 0)} already there / skipped`, '#10b981') +
+    k('Data moved', gb(sum(rows, 'DataGB')), `${Math.floor(secs / 3600)}h ${Math.round(secs % 3600 / 60)}m of copying`, '#a855f7') +
+    k('Avg speed', speeds.length ? fmt(speeds.reduce((a, b) => a + b, 0) / speeds.length) + ' <span style="font-size:13px">Mbit/s</span>' : '-', 'average of all transfers', '#14b8a6') +
+    k('Top speed', peak ? fmt(num(peak.PeakMbit_s)) + ' <span style="font-size:13px">Mbit/s</span>' : '-', peak ? `${peak.Method} &middot; ${peak.FromPC} &rarr; ${peak.ToPC}` : '', '#f59e0b') +
+    k('Success rate', rows.length ? Math.round(ok / rows.length * 100) + '%' : '-', `${fmt(sum(rows, 'FailedFiles'), 0)} failed files`, css('--good')) +
+    k('&#127942; Largest file', big ? fmt(num(big.LargestFileMB)) + ' <span style="font-size:13px">MB</span>' : '-', big ? `${big.LargestFileUser || '?'} &middot; ${big.LargestFileType || ''} &middot; ${big.Date}` : 'no file data yet', '#f59e0b', 'star');
+
+  // File types / folders (older rows may have no file breakdown - say how many count)
+  const withFs = rows.filter(r => r.Docs_GB !== undefined && r.Docs_GB !== '').length;
+  const cov = withFs < rows.length ? `  · based on ${withFs} of ${rows.length} transfers (older ones have no file details)` : '';
+  document.getElementById('typeHint').textContent = 'What kind of files were moved' + cov;
+  document.getElementById('folderHint').textContent = 'Where the data lived on the old PC (GB)' + cov;
+  const types = ['Docs', 'Images', 'Video', 'Audio', 'Archives', 'Other'];
+  const typeNames = { Docs: 'Documents', Images: 'Images', Video: 'Video', Audio: 'Audio', Archives: 'Archives / ISO', Other: 'Other' };
+  donut(document.getElementById('chType'), types.map(t => ({ label: typeNames[t], value: sum(rows, `${t}_${typeUnit}`) })), typeUnit === 'GB' ? gb : v => fmt(v, 0) + ' files');
+  const folders = ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Videos', 'Music', 'Favorites', 'OneDrive', 'OtherFolders'];
+  donut(document.getElementById('chFolder'), folders.map(f => ({ label: f === 'OtherFolders' ? 'Other folders' : f, value: sum(rows, `${f}_GB`) })), gb);
+
+  // Speed per transfer (last 30)
+  const last = rows.slice(-30);
+  chart(document.getElementById('chSpeed'), last.map(runLabel),
+    [{ name: 'Average', values: last.map(r => num(r.AvgMbit_s) || 0) }, { name: 'Peak', values: last.map(r => num(r.PeakMbit_s) || 0) }],
+    { fmt: v => fmt(v, 0) });
+
+  // Per month, stacked by method
+  const months = [...new Set(rows.filter(r => r._date).map(r => r._date.toISOString().slice(0, 7)))].sort();
+  const methods = [...new Set(rows.map(r => r.Method || '?'))];
+  chart(document.getElementById('chMonth'), months.map(m => new Date(m + '-01T00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' })),
+    methods.map(me => ({ name: me, values: months.map(m => sum(rows.filter(r => r._date && r._date.toISOString().startsWith(m) && (r.Method || '?') === me), 'DataGB')) })),
+    { stacked: true, fmt: v => v >= 10 ? Math.round(v) + ' GB' : (+v.toFixed(1)) + ' GB' });
+
+  donut(document.getElementById('chMethod'), methods.map(me => ({ label: me, value: rows.filter(r => (r.Method || '?') === me).length })), v => fmt(v, 0));
+
+  // Leaderboard
+  const top = rows.filter(r => num(r.LargestFileMB)).sort((a, b) => num(b.LargestFileMB) - num(a.LargestFileMB)).slice(0, 5);
+  document.getElementById('lb').innerHTML = top.length ? top.map((r, i) => `<div class="lbrow"><div class="rank r${i + 1}">${i + 1}</div>
+      <div><b>${esc(r.LargestFileUser || 'unknown')}</b><br><small>${esc(r.LargestFileType || '')} &middot; ${esc(r.FromPC)} &rarr; ${esc(r.ToPC)} &middot; ${esc(r.Date)}</small></div>
+      <div style="font-weight:700">${fmt(num(r.LargestFileMB))} MB</div></div>`).join('') : '<div class="empty">No largest-file data yet</div>';
+
+  renderBuilder(rows); renderTable(rows);
+}
+
+function renderBuilder(rows) {
+  const col = document.getElementById('bCol').value, grp = document.getElementById('bGroup').value, agg = document.getElementById('bAgg').value;
+  store.set('bCol', col); store.set('bType', buildType);
+  const key = r => grp === 'run' ? runLabel(r) : grp === 'month' ? (r._date ? r._date.toISOString().slice(0, 7) : '?') : (r[grp] || '(blank)');
+  const groups = new Map(); rows.forEach(r => { const k = key(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+  const labels = [...groups.keys()]; if (grp !== 'run') labels.sort();
+  const val = rs => { const v = rs.map(r => num(r[col])).filter(x => x != null);
+    if (agg === 'count') return rs.length; if (!v.length) return 0;
+    return agg === 'sum' ? v.reduce((a, b) => a + b, 0) : agg === 'avg' ? v.reduce((a, b) => a + b, 0) / v.length : agg === 'max' ? Math.max(...v) : Math.min(...v); };
+  const values = labels.map(l => val(groups.get(l)));
+  const name = `${agg === 'count' ? 'Count' : agg[0].toUpperCase() + agg.slice(1) + ' of ' + col}`;
+  const el = document.getElementById('chBuild');
+  if (buildType === 'donut') donut(el, labels.map((l, i) => ({ label: l, value: values[i] })), v => fmt(v));
+  else chart(el, labels, [{ name, values }], { line: buildType === 'line' });
+}
+
+// ---------- table ----------
+function shownCols() { const s = store.get('cols', null); return (s || defaultCols).filter(c => COLS.includes(c)); }
+function buildColsMenu() {
+  const shown = shownCols();
+  document.getElementById('colsMenu').innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">Columns to show</div>` +
+    COLS.map(c => `<label><input type="checkbox" value="${esc(c)}" ${shown.includes(c) ? 'checked' : ''}>${esc(c)}</label>`).join('') +
+    `<div style="margin-top:8px;display:flex;gap:6px"><button class="btn" id="colsAll">All</button><button class="btn" id="colsDef">Default</button></div>`;
+  document.querySelectorAll('#colsMenu input').forEach(cb => cb.onchange = () => { store.set('cols', [...document.querySelectorAll('#colsMenu input:checked')].map(x => x.value)); render(); });
+  document.getElementById('colsAll').onclick = () => { store.set('cols', COLS); buildColsMenu(); render(); };
+  document.getElementById('colsDef').onclick = () => { store.set('cols', null); buildColsMenu(); render(); };
+}
+function renderTable(rows) {
+  const cols = shownCols();
+  const sorted = [...rows].sort((a, b) => {
+    const x = sortCol === 'Date' ? (a._date || 0) : num(a[sortCol]) ?? a[sortCol], y = sortCol === 'Date' ? (b._date || 0) : num(b[sortCol]) ?? b[sortCol];
+    return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
+  const isNum = c => NUMCOLS.includes(c);
+  document.getElementById('tbl').innerHTML = `<thead><tr>${cols.map(c => `<th class="${isNum(c) ? 'num' : ''}" data-c="${esc(c)}">${esc(c)}${c === sortCol ? (sortDir > 0 ? ' &#9650;' : ' &#9660;') : ''}</th>`).join('')}</tr></thead>
+    <tbody>${sorted.map(r => `<tr>${cols.map(c => c === 'Result' ? `<td><span class="pill ${r[c] === 'OK' ? 'ok' : 'bad'}">${esc(r[c])}</span></td>` : `<td class="${isNum(c) ? 'num' : ''}">${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  document.querySelectorAll('#tbl th').forEach(th => th.onclick = () => { const c = th.dataset.c; sortDir = c === sortCol ? -sortDir : -1; sortCol = c; renderTable(filtered()); });
+}
+document.getElementById('colsBtn').onclick = e => { e.stopPropagation(); document.getElementById('colsMenu').classList.toggle('open'); };
+document.addEventListener('click', e => { if (!e.target.closest('#colsMenu')) document.getElementById('colsMenu').classList.remove('open'); });
+document.getElementById('exportBtn').onclick = () => {
+  const cols = shownCols(), q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const text = [cols.map(q).join(','), ...filtered().map(r => cols.map(c => q(r[c])).join(','))].join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = 'MigrationStats-filtered.csv'; a.click();
+};
+
+// ---------- controls ----------
+['fFrom', 'fTo', 'fMethod', 'fResult', 'fText', 'bCol', 'bGroup', 'bAgg'].forEach(id => document.getElementById(id).addEventListener('input', render));
+document.getElementById('fClear').onclick = () => { ['fFrom', 'fTo', 'fMethod', 'fResult', 'fText'].forEach(id => document.getElementById(id).value = ''); render(); };
+document.querySelectorAll('#typeUnit button').forEach(b => b.onclick = () => { typeUnit = b.dataset.u; document.querySelectorAll('#typeUnit button').forEach(x => x.classList.toggle('on', x === b)); render(); });
+document.querySelectorAll('#bType button').forEach(b => { b.classList.toggle('on', b.dataset.c === buildType); b.onclick = () => { buildType = b.dataset.c; document.querySelectorAll('#bType button').forEach(x => x.classList.toggle('on', x === b)); render(); }; });
+let rT; addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(render, 150); });
+
+// ---------- loading: MigrationStats.js next to this page, open button, drag & drop, last file ----------
+const readFile = f => { const r = new FileReader(); r.onload = () => { store.set('lastCsv', r.result); store.set('lastName', f.name); load(r.result, f.name); }; r.readAsText(f); };
+document.getElementById('openBtn').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange = e => e.target.files[0] && readFile(e.target.files[0]);
+const drop = document.getElementById('drop'); let dragN = 0;
+addEventListener('dragenter', e => { e.preventDefault(); dragN++; drop.classList.add('on'); });
+addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; drop.classList.remove('on'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); dragN = 0; drop.classList.remove('on'); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+
+if (window.MIGRATION_CSV) load(window.MIGRATION_CSV, 'MigrationStats (this folder)' + (window.MIGRATION_CSV_UPDATED ? ', updated ' + window.MIGRATION_CSV_UPDATED : ''));
+else { const last = store.get('lastCsv', null); if (last) load(last, (store.get('lastName', 'last file') + ' (opened earlier)')); }
+</script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+﻿MOVEMATE - help
+(In MoveMate: Help button or F1. Each "== ... ==" line is a topic in the help window.)
+
+== Getting started ==
+MoveMate copies users' files from an OLD PC to a NEW PC. Nothing is installed: copy this whole folder to a flash drive
+(or an IT-only network share) and run it from there. It can also be built into a master image
+(C:\Program Files\MoveMate).
+
+1. Double-click "MoveMate.cmd" and approve UAC with your admin login (e.g. DOMAIN\you).
+2. Section 1: pick HOW the files move (Network / Direct cable / External drive / Server offload) and which PC this is
+   (the OLD PC or the NEW PC).
+3. Section 2: Scan profiles, tick who to copy, check "Copy into".
+4. Sections 3-5: what to copy, where it goes on the new PC, large files.
+5. Preview (optional), then Start copy.
+
+EJECT the flash drive before unplugging it.
+
+== One stick for both PCs ==
+Click 'Run from this PC (free the stick)' (top right) once the window is open. The tool is copied to
+C:\Program Files\MoveMate (without the stick's logs) and reopens from there - eject the stick and take it to
+the other PC.
+When everything is done, click 'Remove tool from this PC'. Users' files (C:\Migration, profiles) are never touched; if
+someone is still waiting for their first sign-in, a small mover stays and removes itself after the last of them.
+
+== Network ==
+Both PCs on the same network - wired or Wi-Fi.
+Wi-Fi works, but is usually much slower than a cable (Test says when this PC is on Wi-Fi). For a big copy, plug both
+PCs in, or use Direct cable. Guest Wi-Fi often blocks PC-to-PC traffic: then Test can't reach the other PC.
+1. Type the other PC's name (or IP). Click Connect... -> Yes = your admin login (the Admin user box adds your domain).
+2. Test, then Scan profiles.
+Can't get in? On the OTHER PC click "Allow access (code)": it shows a 4-character code. Here: Connect... -> No (code)
+-> type that code. "Stop allowing access" (or closing that window) undoes it.
+
+== Direct cable ==
+No network between the PCs - one Ethernet cable straight between them.
+1. While BOTH PCs are still on the network, open the tool on each (UAC needs the network to check your login).
+   How = Direct cable; pick OLD / NEW on each.
+2. Click Start cable link on both. A short note says what changes on the PC (tick "Don't ask again" to skip it next
+   time). Then it waits for you to connect the two PCs with one Ethernet cable. The log shows each step (1-4);
+   Cancel stops within a second and puts the network back.
+3. The PCs find each other (10.99.99.1 / .2) and connect by themselves - nothing to type - then scan profiles.
+   (If a PC is also on another network, e.g. Wi-Fi, it shows a 4-character code instead: enter it on the other PC.)
+4. Pick profiles and Start copy on the PC you work from. Done: End cable link (or close the window) on each PC.
+
+What changes while the link is on: the Ethernet adapter gets a temporary address, file sharing is turned on and a
+temporary login is made so the other PC can connect. All of it is undone when you end the link, Cancel/Reset, or
+restart the PC - the address is never saved, and a start-up task removes the login and sharing change by itself.
+Reopening the tool after a crash offers to continue or undo.
+When nothing is running, the Cancel button says Reset: undo the link and start again from step 1.
+
+== Direct cable by hand ==
+If you'd rather set the addresses yourself (the "set it up by hand" link in the Start cable link note):
+On BOTH PCs:
+1. Write down the current IPv4 settings if they are not "automatic".
+2. Connect the two PCs with one Ethernet cable.
+3. Open Network Connections (Win+R, ncpa.cpl, Enter).
+4. Right-click Ethernet > Properties > Internet Protocol Version 4 (TCP/IPv4) > Properties.
+5. Use the following IP address: OLD PC 10.99.99.1, NEW PC 10.99.99.2, subnet mask 255.255.255.0.
+   Leave the gateway and DNS empty. OK, OK.
+In MoveMate (How = Network on both):
+6. OLD PC: click "Allow access (code)".
+7. NEW PC: type 10.99.99.1, Connect... -> No (code) -> the code. Then Scan and copy as usual.
+When done: set IPv4 back to "Obtain an IP address automatically" (or what you wrote down) on both PCs, and click
+"Stop allowing access" on the old PC.
+
+== External drive ==
+OLD PC: How = External drive -> Browse to the drive (MoveMate creates PCMigration-<OLDPC> on it) -> Start.
+NEW PC: How = External drive -> Browse to that folder -> Scan -> Start.
+
+== Server offload ==
+The old and new PC never need to be on at the same time.
+OLD PC: How = Server offload. Type or Browse to a server folder (\\server\share\folder). Connect... logs in with your
+admin user; New folder... makes one. Protection:
+- None: plain copy (fastest; anyone with access to that folder can read it).
+- Key file: AES-256 encrypted with a random key; file names hidden too. The key is saved on your stick (keys\).
+- Password: AES-256 encrypted with a password you type twice. Nothing secret is stored anywhere.
+The server's free space is checked first. The upload creates <OLDPC>_<date> with every chosen user inside, then saves
+"Restore <OLDPC> <date>.cmd" (+ .key) in this tool's keys\ folder.
+After each upload the restore steps pop up, and are saved in the upload folder as HOW TO RESTORE.txt (no secrets in it).
+
+NEW PC: double-click the Restore ... .cmd - the tool opens with the package picked and (Key file) unlocked.
+Or: How = Server offload, NEW PC, Browse to the package (a password is asked at Start). Then Scan, tick, Start as usual.
+C: needs room for the files (encrypted: twice, briefly).
+Every file is checked (tampering or a wrong key is detected). Only when ALL users of the package came down with no
+errors is it DELETED from the server, together with its Restore key. Otherwise both are kept and the summary says why
+(e.g. a user not downloaded yet - run it again for them).
+KEEP THE KEY PRIVATE: Restore .cmd + .key open a Key-file upload. Lose the key and that upload can't be opened.
+
+== Copy into (who gets the files) ==
+Click the blue "Copy into" of a profile. "Use this for every ticked profile" applies the choice to all of them.
+- Their own account: the user name they sign in with on the new PC (filled in; change it only if different).
+  Section 4 decides the folders.
+- Someone else - REPLACING A PERSON: e.g. jsmith left and mjones takes over. Everything goes in ONE folder on mjones's
+  desktop, "Files from jsmith" (nothing of mjones's is overwritten), with a receipt saying whose files they are.
+  mjones not signed in on the new PC yet? Type the name: the files wait in C:\Migration\mjones.
+- Nobody yet - backup folder only: <folder>\jsmith on the new PC or a \\server\share, report inside. No desktop
+  receipt, nothing waits for a sign-in. Keep that folder's permissions tight.
+Copying to a DRIVE or the SERVER from the old PC: pick it there too - type the user name, or "Decide on the new PC
+(just keep a copy)". The choices are saved with the copy (copy-into.json, names only) and filled in when you Scan on
+the new PC; you can still change them. A NOT DECIDED profile must be picked before Start.
+WHO DOES THE RESTORE: you (IT), on the new PC, with your admin login - the person getting the files doesn't need to
+be signed in. MoveMate (or the Restore .cmd) > Server offload / External drive > This PC = the NEW PC > Browse to the
+upload/export > Scan > tick > check Copy into > Start.
+
+== Where the files go ==
+Section 4 "Folders":
+- Same folders as the old PC: Desktop to Desktop, Documents to Documents...
+- Desktop folder: everything in one folder on the user's desktop. 'Message / folder name...' sets its name
+  (default 'Migrated from old PC').
+- Ask at sign-in: everyone waits in C:\Migration\<user>. When they sign in (first time, or next time if they already
+  use the PC) a window asks: [Place files in same locations] or [Place files in migration folder on my desktop].
+  Closing it = asked again next sign-in. 'Message / folder name...' also edits that question.
+- Other location: a folder picker ON THE NEW PC (Make New Folder works; a \\server\share too). Each user's files go
+  to <folder>\<user>. Their receipt still lands on their desktop (and a copy in that folder) and says where the files
+  are. The folder keeps the permissions of where you put it - make sure the user can open it.
+NO PROFILE ON THE NEW PC YET? Files wait in C:\Migration\<user>; the handoff task moves them into that user's own
+folders the first time THEY sign in (others are ignored). Not needed? Delete C:\Migration\<user>.
+List/cancel on the new PC (admin): scripts\Set-MigrationHandoff.ps1 -List | -Remove [-User jsmith]
+Each user gets "Migration Report - <OLDPC> <date>.txt" on their desktop: every file copied and where it went.
+
+== Bookmarks ==
+'Browser bookmarks' takes the Chrome, Edge and Firefox bookmarks of each user that has any (found in the user's own
+profile on the old PC - whether the browser is installed doesn't matter). The dropdown next to it leaves a browser out.
+Each lands in Documents\Migrated Bookmarks as <Browser>-bookmarks.html (any browser: Import bookmarks > HTML file).
+Firefox: its newest automatic backup is used (Firefox writes one about daily) and is also kept as
+Firefox-bookmarks-backup.jsonlz4 (Firefox: Manage bookmarks > Import and Backup > Restore > Choose File).
+
+== Settings & lists ==
+Section 3, 'Settings & lists' (the dropdown picks which). Files land in the user's Documents\Migrated Settings.
+- Sticky Notes: copied; with "same folders" they are put where Sticky Notes reads them (only if the new PC has no
+  notes yet), otherwise the copy waits in Migrated Settings.
+- Desktop wallpaper: their old desktop picture (right-click > Set as desktop background).
+- Network drives + printer connections: LISTED on the user's receipt (not moved), e.g. H: \\server\home\jsmith.
+- Application inventory for IT: the old PC's installed programs (Windows' own parts left out) and printers with IP address and
+  driver - a searchable page "Application inventory - <OLDPC>.html" (+ .json) in the run's logs and in your IT report. Each program links
+  to a web search for its download, and to your Installers list when it is in there.
+- Printers: carry over (OFF by default - it installs drivers): Windows' Printer Migration tool (PrintBrm) backs up the
+  old PC's printers with drivers, ports and settings and restores them on the new PC. Printers already on the new PC
+  are kept. Drive/server: the backup travels with the copy and is restored at Import/Download (tick it there too).
+  If a printer doesn't come over, the inventory has its name, IP and driver (e.g. run Kyocera's installer).
+
+== Check before start and Retry ==
+Start first checks the OLD PC: is a chosen user signed in (files may change), is Outlook open (.pst files are locked
+and fail), are Office files open - shown under CHECK FIRST in the Start question. It also measures the copy and stops
+if the new PC (or drive) doesn't have room.
+After a run with failed files (e.g. in use), 'Retry failed (N)' appears next to Start: it copies again, and only what
+is missing or changed goes over - the failed files. (Not for an upload - that would make a new package.)
+
+== Large files ==
+Network / cable only. OFF by default: everything is copied.
+Tick 'Set aside files over N MB' to keep big files off the network: by default they are MOVED to
+C:\Migration-Oversized\<user> on the OLD PC (README + manifest), to carry on an external drive.
+Preview shows sizes, large files and free space first.
+
+== Advanced ==
+'Advanced...' (top of the window). Remembered; Export/Import settings puts the same setup on every stick.
+- Speed: copy threads (default 8); speed limit in MB/s for daytime copies (one paced stream); SMB compression
+  (Windows 11 - helps on Wi-Fi and slow links).
+- Reliability: retries and wait per file (more for flaky Wi-Fi); Verify copies = SHA-256 of every copied file on both
+  sides (slower; failures show up for Retry failed).
+- Leave out: file types (*.iso; *.vhdx), folder names, files older than N years.
+- Extra folders outside the profiles (C:\Data): copied to the same path on the new PC - Network, Direct cable,
+  External drive (not Server offload).
+- Installers: shows the Installers button (see Installers).
+- Clean up this PC: open or delete C:\Migration-Incoming (download leftovers), C:\Migration-Oversized,
+  C:\Migration-Keys (restore keys - those uploads can't be opened without them), kept logs; cancel a waiting handoff.
+- Settings: export, import, reset to defaults.
+
+== Installers ==
+Turn it on in Advanced. The Installers button (top) lists your programs from extras\installers.csv:
+Name (blue link = its download page), Url, File, Args, Match, Notes.
+- File = an installer in MoveMate\extras\installers, OR a full path such as \\server\share\setup.exe (a server
+  works as is; 'Add installer file...' keeps a server/network-drive path instead of copying it to the stick).
+- Args = silent-install switches (/qn for .msi, /S for many .exe); empty = the normal installer window.
+- Match = the name in Apps & features (wildcards *) - 'On this PC' shows what is already installed.
+Tick programs > 'Install checked': they install one after another (status: installed / restart needed / failed).
+A ticked row with no file opens its download page. Edit list... / Import CSV... (replace or add) / Save CSV as...
+'App inventory' opens the inventories made by copies (kept in that run's logs and your IT report - after the old PC
+is wiped it's the record of what it had)
+or lists the programs NOW on this PC or the other PC in section 1 (Connect... first) - shown, not saved. In that window:
+search, tick programs > 'Add checked to Installers list' (clean name + web-search link until you add the file),
+'Search the web for it'. Printers are listed below with IP and driver. 'Print a test page: paperjammed.net' for checking printers.
+'Remove checked' takes the ticked programs off the list (asks first; installer files are kept).
+'Run from this PC' copies the list, not the installer files (they can be big) - those stay on the stick.
+
+== Progress ==
+Bottom of the window. TOTAL = the whole transfer (%, amount, speed, time left). CURRENT = the user\folder being copied;
+for encrypted server uploads/downloads it's the file itself, moving inside big files.
+Network/cable/drive copies measure the selection first and move as each file finishes (robocopy copies 8 files at once
+and can't report inside a file). A rerun only copies what changed, so it may jump to 100% at the end.
+
+== Running from a network share ==
+No stick needed: put this folder on an IT-only share and start 'MoveMate.cmd' from \\server\share\... (a mapped drive
+letter works too). logs\ (stats, every transfer's file lists) and keys\ then live on that share - keep its permissions
+IT-only.
+Direct cable: the share disappears when you switch to the cable, so click 'Run from this PC (works offline)' on both
+PCs first (the tool refuses to start a cable link from the share).
+
+== Notify IT ==
+Send to PC + User (e.g. IT-PC01 / jdoe) -> Test (asks your password once). After each transfer that desktop gets
+'Migration Reports' (summary + MigrationStats.csv) and a popup. Unreachable? Queued, sent after the next transfer.
+
+== Walk away ==
+'Start & walk away...' asks for an IT password (not saved) and how much to lock:
+- Lock MoveMate only (someone keeps working on this PC): only the MoveMate window is locked; the IT password unlocks it.
+  The finished message shows in a small window.
+- Full-screen lockdown, all monitors (nobody around): your message on every screen. Unlock = the IT password (unlocks
+  everything), or the Windows password of whoever is signed in at the PC (back to the desktop; MoveMate stays locked).
+  Ctrl+Alt+Del > Switch user also works: someone can sign in as themselves while the transfer keeps running.
+The PC stays awake while copying. When the copy finishes anyone may close the tool; using it again needs the password.
+Start at (time): the copy waits, locked, until then (later today, or tomorrow if that time has passed) - e.g. after
+hours. IT unlock while it waits cancels it.
+Sign out of Windows when it finishes: so your login isn't left open. A 60-second warning comes first ("Sign out now";
+"Cancel sign-out" only when nobody is locked out). It happens even with problems - the log is saved and sent to IT
+first, and MoveMate closes first (a cable link is put back to normal). An IT unlock during the countdown stops it.
+"When it finishes OK, close MoveMate" (in the walk-away setup, remembered): after the report is sent to IT (if Notify IT
+is on), the done screen counts down 30 s and MoveMate closes; the done message stays up in a small box for whoever
+comes back. With problems it does NOT close - it stays locked for IT. IT unlock during the countdown stops it.
+"...and remove MoveMate from this PC" shows only when it runs from this PC's own copy (after 'Run from this PC'): it
+then removes itself like 'Remove tool from this PC' (users' files are never touched). If the report did not reach IT,
+that run's logs are kept in C:\ProgramData\MoveMate\logs first. Run from a stick or a network share, it is never removed.
+
+== Dashboard and logs ==
+'Migration Dashboard.html' sits next to MigrationStats.csv (your Migration Reports folder, and logs\ here) and opens in
+any browser - stats, charts, leaderboard, chart builder, light/dark. Offline; you can also drop any MigrationStats.csv
+on it.
+Logs: logs\ in this folder (Open logs). Settings are remembered in scripts\migrate-settings.json.
+
+Like MoveMate? Buy me a coffee: https://www.buymeacoffee.com/printerjammed
