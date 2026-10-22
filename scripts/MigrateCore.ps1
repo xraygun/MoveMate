@@ -6,7 +6,7 @@
 # Where the tool installs on a PC (relative to the drive root) and its scheduled task names - change here only.
 # Legacy: older versions used the names below; they're still recognized so pending handoffs keep working.
 $MigToolName = 'MoveMate'   # shown in instructions/messages (the launcher is "<name>.cmd")
-$MigToolVersion = '1.0.0'   # this copy's version - bump it with each GitHub release (tag v1.0.0); the update check compares to it
+$MigToolVersion = '1.0.1'   # this copy's version - bump it with each GitHub release (tag v1.0.0); the update check compares to it
 $MigUpdateRepo = 'xraygun/MoveMate'   # GitHub owner/repo the update check asks for its latest release
 $MigToolRel = 'Program Files\MoveMate'
 $MigLegacyToolRel = 'Program Files\MoveMate'

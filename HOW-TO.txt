@@ -186,6 +186,8 @@ Name (blue link = its download page), Url, File, Args, Match, Notes.
 - Args = silent-install switches (/qn for .msi, /S for many .exe); empty = the normal installer window.
 - Match = the name in Apps & features (wildcards *) - 'On this PC' shows what is already installed.
 Tick programs > 'Install checked': they install one after another (status: installed / restart needed / failed).
+Or click a program's blue 'Run' (Installer column, shown once its file is saved there) to install just that one;
+point at it to see the full path. A missing file shows in red as MISSING.
 A ticked row with no file opens its download page. Edit list... / Import CSV... (replace or add) / Save CSV as...
 'App inventory' opens the inventories made by copies (kept in that run's logs and your IT report - after the old PC
 is wiped it's the record of what it had)

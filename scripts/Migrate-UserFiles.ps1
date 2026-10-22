@@ -2668,12 +2668,19 @@ function Update-InstallerGrid {
     $q = $script:inst; $g = $q.Grid; $g.Rows.Clear()
     foreach ($e in @(Read-InstallerList $script:instCsv)) {
         $p = Get-InstallerPath $e
-        $where = if (-not $p) { '-' } elseif (-not (Test-Path -LiteralPath $p)) { "MISSING: $($e.File)" } elseif ($p -like '\\*') { "on the server: $(Split-Path $p -Leaf)" } else { $(if ($e.File -match '^[A-Za-z]:') { $p } else { "in $($script:instDirShown): $($e.File)" }) }
+        # Installer file there: a blue 'Run' link (the full path in its tooltip). Missing / none: plain text.
+        $ok = $p -and (Test-Path -LiteralPath $p)
+        $where = if (-not $p) { '-' } elseif (-not $ok) { "MISSING: $($e.File)" } else { 'Run' }
         $m = if ($e.Match) { $e.Match } else { $e.Name }
         $have = @($q.Have | Where-Object { $_ -like "*$m*" -or $_ -like $m }).Count
         $i = $g.Rows.Add($false, $e.Name, $where, $(if ($have) { 'yes' } else { '' }), $e.Notes, '')
         $g.Rows[$i].Tag = $e
         if (-not $e.Url) { $g.Rows[$i].Cells[1] = New-Object Windows.Forms.DataGridViewTextBoxCell -Property @{ Value = $e.Name } }
+        if ($ok) { $g.Rows[$i].Cells[2].ToolTipText = "Run $p$(if ($e.Args) { " $($e.Args)" })" }
+        else {
+            $g.Rows[$i].Cells[2] = New-Object Windows.Forms.DataGridViewTextBoxCell -Property @{ Value = $where }
+            if ($p) { $g.Rows[$i].Cells[2].Style.ForeColor = [Drawing.Color]::Firebrick; $g.Rows[$i].Cells[2].ToolTipText = "Not found: $p" }
+        }
     }
     $q.Count.Text = "$($g.Rows.Count) program(s) in $script:instCsv"
 }
@@ -2683,7 +2690,8 @@ function Show-Installers {
     $g = New-Object Windows.Forms.DataGridView -Property @{ Location = (P 12 12); Size = (S 966 446); Anchor = 'Top, Bottom, Left, Right'; AllowUserToAddRows = $false; AllowUserToDeleteRows = $false; RowHeadersVisible = $false; SelectionMode = 'FullRowSelect'; BackgroundColor = [Drawing.Color]::White }
     [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewCheckBoxColumn -Property @{ HeaderText = 'Pick'; Width = 50 }))
     [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewLinkColumn -Property @{ HeaderText = 'Program (opens its page)'; Width = 230; ReadOnly = $true; TrackVisitedState = $false }))
-    foreach ($c in @(@('Installer', 230), @('On this PC', 75), @('Notes', 230), @('Status', 145))) { [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewTextBoxColumn -Property @{ HeaderText = $c[0]; Width = $c[1]; ReadOnly = $true })) }
+    [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewLinkColumn -Property @{ HeaderText = 'Installer'; Width = 230; ReadOnly = $true; TrackVisitedState = $false }))
+    foreach ($c in @(@('On this PC', 75), @('Notes', 230), @('Status', 145))) { [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewTextBoxColumn -Property @{ HeaderText = $c[0]; Width = $c[1]; ReadOnly = $true })) }
     $cnt = New-Object Windows.Forms.Label -Property @{ Location = (P 12 464); Size = (S 740 18); ForeColor = [Drawing.Color]::DimGray; Anchor = 'Bottom, Left, Right'; AutoEllipsis = $true }
     $bGo = New-Object Windows.Forms.Button -Property @{ Text = 'Install checked'; Location = (P 12 496); Size = (S 120 32); Anchor = 'Bottom, Left'; Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold) }
     $bRm = New-Object Windows.Forms.Button -Property @{ Text = 'Remove checked'; Location = (P 138 496); Size = (S 110 32); Anchor = 'Bottom, Left' }
@@ -2701,17 +2709,17 @@ function Show-Installers {
     $cnt.Text = 'Checking what is installed on this PC...'
     $f.Add_Shown({ [Windows.Forms.Application]::DoEvents(); $script:inst.Have = @(Get-InstalledSoftware | ForEach-Object Name); Update-InstallerGrid })
     $g.Add_CellContentClick({ param($s, $e)
-        if ($e.RowIndex -lt 0 -or $e.ColumnIndex -ne 1) { return }
-        $u = $s.Rows[$e.RowIndex].Tag.Url
-        if ($u) { Start-Process explorer.exe "`"$u`"" }   # opens in the signed-in user's browser (not as admin)
+        if ($e.RowIndex -lt 0) { return }
+        $row = $s.Rows[$e.RowIndex]
+        if ($e.ColumnIndex -eq 1) {
+            $u = $row.Tag.Url
+            if ($u) { Start-Process explorer.exe "`"$u`"" }   # opens in the signed-in user's browser (not as admin)
+        } elseif ($e.ColumnIndex -eq 2 -and $row.Cells[2] -is [Windows.Forms.DataGridViewLinkCell]) { Add-InstallRows @($row) }   # Run: just this one
     })
     $bGo.Add_Click({
-        $q = $script:inst
-        foreach ($row in $q.Grid.Rows) { if ($row.Cells[0].Value -eq $true) { $q.Queue.Add($row); $row.Cells[5].Value = 'queued' } }
-        if (-not $q.Queue.Count) { [void][Windows.Forms.MessageBox]::Show('Tick the programs to install first.', $MigToolName); return }
-        $q.Go.Enabled = $false
-        $q.Timer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
-        $q.Timer.Add_Tick({ Step-InstallQueue }); $q.Timer.Start(); Step-InstallQueue
+        $rows = @($script:inst.Grid.Rows | Where-Object { $_.Cells[0].Value -eq $true })
+        if (-not $rows.Count) { [void][Windows.Forms.MessageBox]::Show('Tick the programs to install first.', $MigToolName); return }
+        Add-InstallRows $rows
     })
     # Remove checked: takes the ticked programs off the list (after a confirm). Installer files are left where they are.
     $bRm.Add_Click({
@@ -2855,6 +2863,19 @@ function Show-AppInventory($Data) {
         & $script:ainv.Fill
     })
     [void]$f.ShowDialog()
+}
+# Queue rows to install one after another (Install checked, or a row's Run link). Rows already queued or running are
+# skipped; while installs run, more can be added and they wait their turn.
+function Add-InstallRows($Rows) {
+    $q = $script:inst
+    foreach ($row in $Rows) {
+        if ($q.Queue.Contains($row) -or ($q.Proc -and $q.Row -eq $row)) { continue }
+        $q.Queue.Add($row); $row.Cells[5].Value = 'queued'
+    }
+    if ($q.Timer -and $q.Timer.Enabled) { return }   # the running queue picks them up
+    $q.Go.Enabled = $false
+    $q.Timer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
+    $q.Timer.Add_Tick({ Step-InstallQueue }); $q.Timer.Start(); Step-InstallQueue
 }
 # One step of the install queue: finish the running one (exit code), start the next. Timer-driven (window stays usable).
 function Step-InstallQueue {
