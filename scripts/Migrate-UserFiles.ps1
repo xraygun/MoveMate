@@ -57,7 +57,33 @@ $NoLimit = 4TB   # a drive export carries everything, so nothing is "oversized"
 $script:migIcon = try { New-Object Drawing.Icon (Join-Path $PSScriptRoot 'MoveMate.ico') } catch { $null }
 function P($x, $y) { New-Object Drawing.Point $x, $y }
 function S($w, $h) { New-Object Drawing.Size $w, $h }
-$form = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName $MigToolVersion  -  this PC: $env:COMPUTERNAME"; ClientSize = (S 905 900); StartPosition = 'CenterScreen'; FormBorderStyle = 'FixedSingle'; MaximizeBox = $false; Font = New-Object Drawing.Font('Segoe UI', 9) }
+$form = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName $MigToolVersion  -  this PC: $env:COMPUTERNAME"; ClientSize = (S 905 900); StartPosition = 'CenterScreen'; FormBorderStyle = 'Sizable'; MaximizeBox = $true; Font = New-Object Drawing.Font('Segoe UI', 9) }
+
+# Small or scaled screens (e.g. 1080p at 150%): no window is taller or wider than the screen's work area. -Scroll (fixed
+# layouts): the window scrolls to show the rest - AutoScrollMinSize keeps the full layout size, and a resizable window
+# can grow (or maximize) up to it. Without -Scroll (layouts that stretch): the window is just made to fit.
+function Enable-FitToScreen($F, [switch]$Scroll) {
+    if ($Scroll) { $F.AutoScroll = $true; $F.AutoScrollMinSize = $F.ClientSize }
+    $F.Add_Load({ Resize-ToScreen $this })
+}
+function Resize-ToScreen($F) {
+    $wa = [Windows.Forms.Screen]::FromControl($F).WorkingArea
+    $cw = $F.Width - $F.ClientSize.Width; $ch = $F.Height - $F.ClientSize.Height   # borders + title bar
+    $sb = [Windows.Forms.SystemInformation]::VerticalScrollBarWidth
+    $want = if ($F.AutoScroll) { $F.AutoScrollMinSize } else { $F.ClientSize }
+    if ($F.AutoScroll -and $F.FormBorderStyle -eq 'Sizable') { $F.MaximumSize = S ($want.Width + $cw + $sb) ($want.Height + $ch) }
+    $h = [math]::Min($want.Height, $wa.Height - $ch)
+    $w = $want.Width + $(if ($F.AutoScroll -and $h -lt $want.Height) { $sb } else { 0 })
+    $w = [math]::Min($w, $wa.Width - $cw)
+    if ($w -eq $F.ClientSize.Width -and $h -eq $F.ClientSize.Height) { return }
+    $F.ClientSize = S $w $h
+    # Re-place it on the screen: centred when it was meant to be, and never past an edge
+    $x = $F.Left; $y = $F.Top
+    if ($F.StartPosition -in 'CenterScreen', 'CenterParent') { $x = $wa.Left + ($wa.Width - $F.Width) / 2; $y = $wa.Top + ($wa.Height - $F.Height) / 2 }
+    $x = [math]::Max($wa.Left, [math]::Min($x, $wa.Right - $F.Width)); $y = [math]::Max($wa.Top, [math]::Min($y, $wa.Bottom - $F.Height))
+    $F.StartPosition = 'Manual'; $F.Location = P ([int]$x) ([int]$y)
+}
+Enable-FitToScreen $form -Scroll
 function Add-Ctl([string]$Type, [hashtable]$Props, $Parent = $form) { $c = New-Object "Windows.Forms.$Type" -Property $Props -ErrorAction Stop; $Parent.Controls.Add($c); $c }
 function Add-Head([string]$Text, $y) { [void](Add-Ctl Label @{ Text = $Text; Location = (P 12 $y); AutoSize = $true; Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold) }) }
 
@@ -83,6 +109,7 @@ function Show-Help([string]$Topic) {
             elseif ($cur) { $cur.Lines.Add($l) }
         }
         $f = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName Help"; Size = (S 980 680); MinimumSize = (S 600 400); StartPosition = 'Manual'; Font = $form.Font; KeyPreview = $true }
+        Enable-FitToScreen $f
         $f.Location = New-Object Drawing.Point ([math]::Max(0, $form.Left + ($form.Width - 980) / 2)), ([math]::Max(0, $form.Top + 40))
         # Docking goes from the last-added control inwards: add the Fill control first
         $page = New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; Padding = (New-Object Windows.Forms.Padding 18, 12, 6, 6); BackColor = [Drawing.Color]::White }
@@ -232,6 +259,35 @@ $lblConn = Add-Ctl Label @{ Location = (P 24 150); Size = (S 866 32); ForeColor 
 # 2. Profiles
 Add-Head '2. Profiles  (tick who to copy; click the blue "Copy into" to change who gets the files)' 186
 $btnScan = Add-Ctl Button @{ Text = 'Scan profiles'; Location = (P 785 182); Size = (S 105 26) }
+# Profile sizes on THIS PC before picking How (nothing else needs filling in): what the folders ticked in section 3 would
+# copy, per profile, with rough copy times - to choose between network, cable, external drive or server. Read-only.
+$btnSizes = Add-Ctl Button @{ Text = 'Sizes on this PC'; Location = (P 668 182); Size = (S 112 26) }
+$btnSizes.Add_Click({
+    $users = Join-Path $env:SystemDrive 'Users'
+    $profiles = @(Get-MigrationProfiles $users)
+    if (-not $profiles.Count) { Write-Log "No user profiles found in $users."; return }
+    Set-Busy $true
+    Write-Log "== Profile sizes on $env:COMPUTERNAME (the folders ticked in section 3; Cancel stops):"
+    $total = [long]0; $files = 0
+    foreach ($p in $profiles) {
+        if ($script:cancel) { break }
+        $src = Join-Path $users $p.Name; $b = [long]0; $n = 0
+        foreach ($rel in (Get-FolderList $src)) {
+            if ($script:cancel) { break }
+            $s = Join-Path $src $rel; if (-not (Test-Path -LiteralPath $s)) { continue }
+            $lblStatus.Text = "Measuring $($p.Name)\$rel ..."; [Windows.Forms.Application]::DoEvents()
+            $st = Get-FolderStats $s $NoLimit; $b += $st.Bytes; $n += $st.Files
+        }
+        $total += $b; $files += $n
+        Write-Log ("   {0,-24} {1,9} files  {2,10}   last used {3}" -f $p.Name, $n, (Format-Size $b), $p.LastUsed.ToString('yyyy-MM-dd'))
+    }
+    # Rough times at typical speeds (real ones vary with the PCs, the files and the network)
+    $t = { param($mbps) $s = $total / 1MB / $mbps; if ($s -lt 90) { 'about a minute' } elseif ($s -lt 5400) { "~$([math]::Ceiling($s / 60)) min" } else { '~{0:N1} h' -f ($s / 3600) } }
+    if ($script:cancel) { Write-Log '   (stopped - the total covers the profiles measured so far)' }
+    Write-Log ("   TOTAL {0} in {1} files. Rough copy time: direct cable or wired network {2}, Wi-Fi {3}, external drive {4} (copied on, then off)." -f (Format-Size $total), $files, (& $t 90), (& $t 12), (& $t 40))
+    $lblStatus.Text = 'Sizes measured.'
+    Set-Busy $false
+})
 $grid = Add-Ctl DataGridView @{ Location = (P 12 212); Size = (S 878 140); AllowUserToAddRows = $false; AllowUserToDeleteRows = $false; RowHeadersVisible = $false; SelectionMode = 'FullRowSelect'; BackgroundColor = [Drawing.Color]::White }
 $colChk = New-Object Windows.Forms.DataGridViewCheckBoxColumn -Property @{ HeaderText = 'Copy'; Width = 45 }
 [void]$grid.Columns.Add($colChk)
@@ -273,7 +329,7 @@ $flow.Controls.Add($cbOneDrive)
 # "Settings & lists": small things people miss. Files land in the user's Documents\Migrated Settings; the drives/printers
 # list is also printed on their receipt; the programs list is for IT (a searchable page in the run's logs / IT report).
 $MigSettingItems = [ordered]@{ StickyNotes = 'Sticky Notes'; Wallpaper = 'Desktop wallpaper'; DrivesPrinters = 'List of network drives + printer connections (on the receipt)'
-    Software = 'Application inventory for IT: installed programs + printers (name, IP, driver)'; PrintersMove = 'Printers: carry over to the new PC (drivers + settings, Windows PrintBrm)' }
+    Software = 'Application inventory for IT: installed programs + printers (name, IP, driver)'; PrintersMove = 'Printers: carry over to the new PC, for every user (drivers + settings + print-server printers)' }
 $cbSettings = New-Object Windows.Forms.CheckBox -Property @{ Text = 'Settings && lists'; AutoSize = $true; Checked = $true }
 $flow.Controls.Add($cbSettings)
 $btnSet = New-Object Windows.Forms.Button -Property @{ Text = 'All  ▾'; AutoSize = $true; Height = 24; Margin = (New-Object Windows.Forms.Padding 0, 0, 12, 0) }
@@ -285,7 +341,7 @@ function Update-SetText {
     $btnSet.Text = if ($on.Count -eq $setBoxes.Count) { 'All  ▾' } elseif (-not $on.Count) { 'None  ▾' } else { "$($on.Count) of $($setBoxes.Count)  ▾" }
 }
 foreach ($k in $MigSettingItems.Keys) {
-    $mi = New-Object Windows.Forms.ToolStripMenuItem -Property @{ Text = $MigSettingItems[$k]; CheckOnClick = $true; Checked = ($k -ne 'PrintersMove') }   # carry-over installs drivers: opt in
+    $mi = New-Object Windows.Forms.ToolStripMenuItem -Property @{ Text = $MigSettingItems[$k]; CheckOnClick = $true; Checked = $true }   # all on by default (printer carry-over too)
     $mi.Add_CheckedChanged({ Update-SetText }); [void]$setMenu.Items.Add($mi); $setBoxes[$k] = $mi
 }
 $setMenu.Add_Closing({ param($s, $e) if ($e.CloseReason -eq 'ItemClicked') { $e.Cancel = $true } })   # stays open while ticking
@@ -462,6 +518,7 @@ function Set-Locked([bool]$On) {
 #            screen (MoveMate stays locked), the IT password unlocks everything.
 function Show-WalkDialog {
     $d = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = 'Start and walk away'; ClientSize = (S 560 690); StartPosition = 'CenterParent'; FormBorderStyle = 'FixedDialog'; MaximizeBox = $false; MinimizeBox = $false; Font = $form.Font }
+    Enable-FitToScreen $d -Scroll
     $add = { param($c) $d.Controls.Add($c); $c }
     $gray = [Drawing.Color]::DimGray
     [void](& $add (New-Object Windows.Forms.Label -Property @{ Text = 'IT password to unlock MoveMate (not saved anywhere):'; Location = (P 12 12); Size = (S 536 20) }))
@@ -911,7 +968,7 @@ function Update-ModeUi {
     $sending = ($drive -or $server) -and $rbOld.Checked   # to a drive/server: no "where on the new PC" yet
     $pnlLayout.Enabled = -not $sending
     foreach ($c in $rbIntoProfile, $rbMigration) { $c.Enabled = -not $sending -and -not $rbAsk.Checked }   # Ask = always via C:\Migration
-    foreach ($c in $btnScan, $btnPreview, $btnStart) { $c.Enabled = $idle }
+    foreach ($c in $btnScan, $btnSizes, $btnPreview, $btnStart) { $c.Enabled = $idle }
     foreach ($c in $pnlHow, $pnlRole) { $c.Enabled = $idle -and -not $script:cableOn -and -not $script:hostOn }
     if (-not $script:cableOn -and -not $script:hostOn -and -not $script:busy) {
         if ($cable -and $script:fromNetwork -and -not $script:runningLocal) { Set-Conn 'This tool is running from the network share, which is gone once you switch to the cable. Click "Run from this PC (works offline)" (top right) first, on BOTH PCs.' 'DarkOrange' }
@@ -2143,7 +2200,7 @@ function Invoke-StartCopy([bool]$Walk) {
     $extraNote = ''; $swNote = ''
     if (-not $script:cancel) { $extraNote = Copy-ExtraFolders $r $runDir }
     if (-not $script:cancel -and (Test-WantSoftware)) { $swNote = Save-PcInventory $r $runDir $from }
-    $prnNote = ''; if (-not $script:cancel -and (Test-WantPrintersMove)) { $prnNote = Move-Printers $r $runDir }
+    $prnNote = ''; if (-not $script:cancel -and (Test-WantPrintersMove)) { $prnNote = Move-Printers $r $runDir $userNames }
     if ($prnNote) { $swNote = (@($swNote, $prnNote) | Where-Object { $_ }) -join "`r`n" }
     $big = @($results | ForEach-Object { $_.Oversized })
     Update-RoboProgress
@@ -2469,30 +2526,59 @@ function Save-PcInventory($r, [string]$RunDir, [string]$OldPc) {
     "Application inventory of ${OldPc}: $($sw.Count) programs, $($pr.Count) printers (with IP and driver): $html"
 }
 
-# ---------- Printers: carry over (opt-in) with Windows' Printer Migration tool ----------
-# Backup on the old PC (this one, or \\OLDPC for Pull), restore on the new PC (this one, or \\NEWPC for Push).
-# Drive/server: printers.printerExport travels with the copy and is restored on Import/Download (if ticked there).
+# ---------- Printers: carry over (on by default), for every user of the new PC ----------
+# The PC's printers: Windows' Printer Migration tool (PrintBrm) - backup on the old PC (this one, or \\OLDPC for Pull),
+# restore on the new PC (this one, or \\NEWPC for Push). Restored printers are the PC's, so every user there has them.
+# The copied users' print-server printers (\\server\printer - each user's own, which PrintBrm doesn't carry): added on
+# the new PC as per-machine connections, so every user gets them at sign-in (Add-GlobalPrinterConnection).
+# Drive/server: printers.printerExport + printer-connections.txt travel with the copy and are used at Import/Download.
 # Printers already on the new PC are kept as they are.
-function Move-Printers($r, [string]$RunDir) {
+function Move-Printers($r, [string]$RunDir, [string[]]$Users) {
     if ($r.Other -eq 'TEST') { return '' }
     New-Item -ItemType Directory -Force $RunDir | Out-Null
     $file = Join-Path $RunDir 'printers.printerExport'
-    $carried = if ($r.Mode -in 'Import', 'Download') { Join-Path $r.Src 'printers.printerExport' }
-    if ($carried -and -not (Test-Path -LiteralPath $carried)) { Write-Log 'Printers: no printer backup came with this copy (tick it on the old PC).'; return '' }
-    if (-not $carried) {
+    $connFile = Join-Path $RunDir 'printer-connections.txt'
+    $notes = @()
+    if ($r.Mode -in 'Import', 'Download') {
+        $cb = Join-Path $r.Src 'printers.printerExport'; $cc = Join-Path $r.Src 'printer-connections.txt'
+        if (-not (Test-Path -LiteralPath $cb) -and -not (Test-Path -LiteralPath $cc)) { Write-Log 'Printers: no printer backup came with this copy (tick it on the old PC).'; return '' }
+        if (Test-Path -LiteralPath $cb) { Copy-Item -LiteralPath $cb $file -Force }
+        if (Test-Path -LiteralPath $cc) { Copy-Item -LiteralPath $cc $connFile -Force }
+    } else {
+        $conn = @(Get-ProfilePrinterConnections (Join-Path $r.Src 'Users') $Users)
+        if ($conn.Count) { Set-Content -LiteralPath $connFile -Value $conn -Encoding UTF8; Write-Log "Print-server printers of the copied users: $($conn -join ', ')" }
         $from = if ($r.Mode -eq 'Pull') { $r.Other } else { '' }
         $q = Invoke-Bg -Script { param($core, $f, $pc) . $core; Invoke-PrintBrm -Backup -File $f -Computer $pc } -ArgList @($file, $from) -TimeoutSec 600 -Status 'Backing up printers (drivers + settings)'
         $o = if ($q.Ok) { @($q.Output)[-1] }
-        if (-not $o -or -not $o.Ok) { Write-Log "! Printer backup failed: $(if ($o) { $o.Output } else { 'no answer' })"; return 'Printers: NOT carried over (backup failed - see log). The Application inventory lists them with IP and driver.' }
-        Write-Log "Printers backed up: $file"
-        if ($r.Mode -in 'Export', 'Upload') { Copy-Item -LiteralPath $file (Join-Path $r.Dst 'printers.printerExport') -Force; return 'Printers: backed up with the copy - restored on the new PC at Import/Download (tick "Printers: carry over" there).' }
-    } else { Copy-Item -LiteralPath $carried $file -Force }
+        if ($o -and $o.Ok) { Write-Log "Printers backed up: $file" }
+        else {
+            Write-Log "! Printer backup failed: $(if ($o) { $o.Output } else { 'no answer' })"
+            Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+            $notes += "Printers: the old PC's printers were NOT carried over (backup failed - see log). The Application inventory lists them with IP and driver."
+        }
+        if ($r.Mode -in 'Export', 'Upload') {
+            $sent = @(foreach ($x in $file, $connFile) { if (Test-Path -LiteralPath $x) { Copy-Item -LiteralPath $x (Join-Path $r.Dst (Split-Path $x -Leaf)) -Force; $x } })
+            if ($sent.Count) { $notes += 'Printers: backed up with the copy - added on the new PC for every user at Import/Download (keep "Printers: carry over" ticked there).' }
+            return ($notes -join "`r`n")
+        }
+    }
     $to = if ($r.Mode -eq 'Push') { $r.Other } else { '' }
-    $q = Invoke-Bg -Script { param($core, $f, $pc) . $core; Invoke-PrintBrm -Restore -File $f -Computer $pc } -ArgList @($file, $to) -TimeoutSec 900 -Status 'Restoring printers on the new PC (drivers + settings)'
-    $o = if ($q.Ok) { @($q.Output)[-1] }
-    Set-Content -LiteralPath (Join-Path $RunDir 'printers-restore.txt') -Value $(if ($o) { $o.Output } else { 'no answer' }) -Encoding UTF8
-    if ($o -and $o.Ok) { Write-Log 'Printers restored on the new PC (existing printers kept).'; 'Printers: carried over to the new PC (drivers + settings).' }
-    else { Write-Log "! Printer restore had problems - see $RunDir\printers-restore.txt"; 'Printers: restore had problems (see printers-restore.txt in the logs) - the Application inventory lists them with IP and driver.' }
+    if (Test-Path -LiteralPath $file) {
+        $q = Invoke-Bg -Script { param($core, $f, $pc) . $core; Invoke-PrintBrm -Restore -File $f -Computer $pc } -ArgList @($file, $to) -TimeoutSec 900 -Status 'Restoring printers on the new PC (drivers + settings)'
+        $o = if ($q.Ok) { @($q.Output)[-1] }
+        Set-Content -LiteralPath (Join-Path $RunDir 'printers-restore.txt') -Value $(if ($o) { $o.Output } else { 'no answer' }) -Encoding UTF8
+        if ($o -and $o.Ok) { Write-Log 'Printers restored on the new PC for every user (existing printers kept).'; $notes += 'Printers: carried over to the new PC for every user (drivers + settings).' }
+        else { Write-Log "! Printer restore had problems - see $RunDir\printers-restore.txt"; $notes += 'Printers: restore had problems (see printers-restore.txt in the logs) - the Application inventory lists them with IP and driver.' }
+    }
+    $conn = @(if (Test-Path -LiteralPath $connFile) { Get-Content -LiteralPath $connFile -Encoding UTF8 | Where-Object { "$_" -like '\\*' } })
+    if ($conn.Count) {
+        $q = Invoke-Bg -Script { param($core, $n, $pc) . $core; Add-GlobalPrinterConnection $n $pc } -ArgList @($conn, $to) -TimeoutSec (150 * $conn.Count + 120) -Status 'Adding print-server printers for every user'
+        Write-Log 'Print-server printers on the new PC, for every user (each user gets them at their next sign-in):'
+        if ($q.Ok) { foreach ($l in @($q.Output)) { Write-Log $l } } else { Write-Log "  ! $(if ($q.TimedOut) { 'no answer in time' } else { $q.Error })" }
+        $added = @(@($q.Output) | Where-Object { "$_" -match ' - (added|requested)' }).Count
+        $notes += "Printers: $added of $($conn.Count) print-server printer(s) added for every user on the new PC (they appear at each user's next sign-in)."
+    }
+    $notes -join "`r`n"
 }
 
 # ---------- Advanced... ----------
@@ -2500,6 +2586,7 @@ function Show-Advanced {
     $a = $script:MigAdv
     Stop-AdvBlink
     $d = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "$MigToolName - Advanced"; ClientSize = (S 640 772); StartPosition = 'CenterParent'; FormBorderStyle = 'FixedDialog'; MaximizeBox = $false; MinimizeBox = $false; Font = $form.Font }
+    Enable-FitToScreen $d -Scroll
     $add = { param($c) $d.Controls.Add($c); $c }
     $gray = [Drawing.Color]::DimGray; $bold = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
     $head = { param($t, $y) [void](& $add (New-Object Windows.Forms.Label -Property @{ Text = $t; Location = (P 12 $y); AutoSize = $true; Font = $bold })) }
@@ -2668,12 +2755,19 @@ function Update-InstallerGrid {
     $q = $script:inst; $g = $q.Grid; $g.Rows.Clear()
     foreach ($e in @(Read-InstallerList $script:instCsv)) {
         $p = Get-InstallerPath $e
-        $where = if (-not $p) { '-' } elseif (-not (Test-Path -LiteralPath $p)) { "MISSING: $($e.File)" } elseif ($p -like '\\*') { "on the server: $(Split-Path $p -Leaf)" } else { $(if ($e.File -match '^[A-Za-z]:') { $p } else { "in $($script:instDirShown): $($e.File)" }) }
+        # Installer file there: a blue 'Run' link (the full path in its tooltip). Missing / none: plain text.
+        $ok = $p -and (Test-Path -LiteralPath $p)
+        $where = if (-not $p) { '-' } elseif (-not $ok) { "MISSING: $($e.File)" } else { 'Run' }
         $m = if ($e.Match) { $e.Match } else { $e.Name }
         $have = @($q.Have | Where-Object { $_ -like "*$m*" -or $_ -like $m }).Count
         $i = $g.Rows.Add($false, $e.Name, $where, $(if ($have) { 'yes' } else { '' }), $e.Notes, '')
         $g.Rows[$i].Tag = $e
         if (-not $e.Url) { $g.Rows[$i].Cells[1] = New-Object Windows.Forms.DataGridViewTextBoxCell -Property @{ Value = $e.Name } }
+        if ($ok) { $g.Rows[$i].Cells[2].ToolTipText = "Run $p$(if ($e.Args) { " $($e.Args)" })" }
+        else {
+            $g.Rows[$i].Cells[2] = New-Object Windows.Forms.DataGridViewTextBoxCell -Property @{ Value = $where }
+            if ($p) { $g.Rows[$i].Cells[2].Style.ForeColor = [Drawing.Color]::Firebrick; $g.Rows[$i].Cells[2].ToolTipText = "Not found: $p" }
+        }
     }
     $q.Count.Text = "$($g.Rows.Count) program(s) in $script:instCsv"
 }
@@ -2683,7 +2777,8 @@ function Show-Installers {
     $g = New-Object Windows.Forms.DataGridView -Property @{ Location = (P 12 12); Size = (S 966 446); Anchor = 'Top, Bottom, Left, Right'; AllowUserToAddRows = $false; AllowUserToDeleteRows = $false; RowHeadersVisible = $false; SelectionMode = 'FullRowSelect'; BackgroundColor = [Drawing.Color]::White }
     [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewCheckBoxColumn -Property @{ HeaderText = 'Pick'; Width = 50 }))
     [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewLinkColumn -Property @{ HeaderText = 'Program (opens its page)'; Width = 230; ReadOnly = $true; TrackVisitedState = $false }))
-    foreach ($c in @(@('Installer', 230), @('On this PC', 75), @('Notes', 230), @('Status', 145))) { [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewTextBoxColumn -Property @{ HeaderText = $c[0]; Width = $c[1]; ReadOnly = $true })) }
+    [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewLinkColumn -Property @{ HeaderText = 'Installer'; Width = 230; ReadOnly = $true; TrackVisitedState = $false }))
+    foreach ($c in @(@('On this PC', 75), @('Notes', 230), @('Status', 145))) { [void]$g.Columns.Add((New-Object Windows.Forms.DataGridViewTextBoxColumn -Property @{ HeaderText = $c[0]; Width = $c[1]; ReadOnly = $true })) }
     $cnt = New-Object Windows.Forms.Label -Property @{ Location = (P 12 464); Size = (S 740 18); ForeColor = [Drawing.Color]::DimGray; Anchor = 'Bottom, Left, Right'; AutoEllipsis = $true }
     $bGo = New-Object Windows.Forms.Button -Property @{ Text = 'Install checked'; Location = (P 12 496); Size = (S 120 32); Anchor = 'Bottom, Left'; Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold) }
     $bRm = New-Object Windows.Forms.Button -Property @{ Text = 'Remove checked'; Location = (P 138 496); Size = (S 110 32); Anchor = 'Bottom, Left' }
@@ -2701,17 +2796,17 @@ function Show-Installers {
     $cnt.Text = 'Checking what is installed on this PC...'
     $f.Add_Shown({ [Windows.Forms.Application]::DoEvents(); $script:inst.Have = @(Get-InstalledSoftware | ForEach-Object Name); Update-InstallerGrid })
     $g.Add_CellContentClick({ param($s, $e)
-        if ($e.RowIndex -lt 0 -or $e.ColumnIndex -ne 1) { return }
-        $u = $s.Rows[$e.RowIndex].Tag.Url
-        if ($u) { Start-Process explorer.exe "`"$u`"" }   # opens in the signed-in user's browser (not as admin)
+        if ($e.RowIndex -lt 0) { return }
+        $row = $s.Rows[$e.RowIndex]
+        if ($e.ColumnIndex -eq 1) {
+            $u = $row.Tag.Url
+            if ($u) { Start-Process explorer.exe "`"$u`"" }   # opens in the signed-in user's browser (not as admin)
+        } elseif ($e.ColumnIndex -eq 2 -and $row.Cells[2] -is [Windows.Forms.DataGridViewLinkCell]) { Add-InstallRows @($row) }   # Run: just this one
     })
     $bGo.Add_Click({
-        $q = $script:inst
-        foreach ($row in $q.Grid.Rows) { if ($row.Cells[0].Value -eq $true) { $q.Queue.Add($row); $row.Cells[5].Value = 'queued' } }
-        if (-not $q.Queue.Count) { [void][Windows.Forms.MessageBox]::Show('Tick the programs to install first.', $MigToolName); return }
-        $q.Go.Enabled = $false
-        $q.Timer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
-        $q.Timer.Add_Tick({ Step-InstallQueue }); $q.Timer.Start(); Step-InstallQueue
+        $rows = @($script:inst.Grid.Rows | Where-Object { $_.Cells[0].Value -eq $true })
+        if (-not $rows.Count) { [void][Windows.Forms.MessageBox]::Show('Tick the programs to install first.', $MigToolName); return }
+        Add-InstallRows $rows
     })
     # Remove checked: takes the ticked programs off the list (after a confirm). Installer files are left where they are.
     $bRm.Add_Click({
@@ -2801,6 +2896,7 @@ function Get-CleanAppName([string]$Name) {
 # The viewer: programs (search, tick, add to the Installers list, search the web) and printers (name, IP, driver).
 function Show-AppInventory($Data) {
     $f = New-Object Windows.Forms.Form -Property @{ Icon = $script:migIcon; Text = "Application inventory - $($Data.Pc)"; ClientSize = (S 960 620); MinimumSize = (S 760 420); StartPosition = 'CenterParent'; Font = $form.Font }
+    Enable-FitToScreen $f
     $hdr = New-Object Windows.Forms.Label -Property @{ Location = (P 12 10); Size = (S 600 20); Text = "$($Data.Pc): $(@($Data.Sw).Count) programs (Windows' own parts left out), $(@($Data.Pr).Count) printers - listed $($Data.Date)" }
     $lS = New-Object Windows.Forms.Label -Property @{ Text = 'Search:'; Location = (P 640 10); AutoSize = $true; Anchor = 'Top, Right' }
     $tS = New-Object Windows.Forms.TextBox -Property @{ Location = (P 692 7); Size = (S 256 23); Anchor = 'Top, Right' }
@@ -2855,6 +2951,19 @@ function Show-AppInventory($Data) {
         & $script:ainv.Fill
     })
     [void]$f.ShowDialog()
+}
+# Queue rows to install one after another (Install checked, or a row's Run link). Rows already queued or running are
+# skipped; while installs run, more can be added and they wait their turn.
+function Add-InstallRows($Rows) {
+    $q = $script:inst
+    foreach ($row in $Rows) {
+        if ($q.Queue.Contains($row) -or ($q.Proc -and $q.Row -eq $row)) { continue }
+        $q.Queue.Add($row); $row.Cells[5].Value = 'queued'
+    }
+    if ($q.Timer -and $q.Timer.Enabled) { return }   # the running queue picks them up
+    $q.Go.Enabled = $false
+    $q.Timer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
+    $q.Timer.Add_Tick({ Step-InstallQueue }); $q.Timer.Start(); Step-InstallQueue
 }
 # One step of the install queue: finish the running one (exit code), start the next. Timer-driven (window stays usable).
 function Step-InstallQueue {
