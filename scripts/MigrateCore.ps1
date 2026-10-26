@@ -732,6 +732,40 @@ function Get-PrinterList([string]$Computer, [pscredential]$Credential) {
             })
     } finally { if ($c.CimSession) { Remove-CimSession $c.CimSession } }
 }
+# Print-server printers (\\server\printer) the given profiles are connected to: each user's own connections, which
+# PrintBrm does not carry (it carries the PC's printers). Unique, sorted.
+function Get-ProfilePrinterConnections([string]$UsersRoot, [string[]]$Users) {
+    @($Users | ForEach-Object { (Get-UserNetworkItems (Join-Path $UsersRoot $_)).Printers } | Where-Object { "$_" -like '\\*' } | Sort-Object -Unique)
+}
+# Print-server printers for EVERY user of a PC (this one, or -Computer): per-machine connections (printui /ga), which
+# Windows adds to each user's printers when they sign in - existing users and new ones alike. The spooler is restarted
+# so they take effect; the print server must be reachable then for the driver to come down. Returns lines for the log.
+function Add-GlobalPrinterConnection([string[]]$Names, [string]$Computer) {
+    $pc = if ($Computer) { $Computer.TrimStart('\') } else { '' }
+    $on = if ($pc) { " /c\\$pc" } else { '' }
+    $lines = @()
+    foreach ($n in $Names) {
+        $p = Start-Process rundll32.exe -ArgumentList "printui.dll,PrintUIEntry /ga /q /n`"$n`"$on" -PassThru -WindowStyle Hidden
+        if (-not $p.WaitForExit(120000)) { try { $p.Kill() } catch {}; $lines += "  $n - no answer in 2 minutes (print server not reachable?)" }
+    }
+    # Which ones Windows now has as per-machine connections (/ge lists them)
+    $list = Join-Path $env:TEMP "kitmig-ge-$([guid]::NewGuid().ToString('n')).txt"
+    $p = Start-Process rundll32.exe -ArgumentList "printui.dll,PrintUIEntry /ge /q /f`"$list`"$on" -PassThru -WindowStyle Hidden
+    [void]$p.WaitForExit(60000)
+    $have = if (Test-Path -LiteralPath $list) { Get-Content -LiteralPath $list -Raw -ErrorAction SilentlyContinue } else { $null }
+    Remove-Item -LiteralPath $list -Force -ErrorAction SilentlyContinue
+    foreach ($n in $Names) {
+        if (@($lines | Where-Object { $_ -like "  $n -*" }).Count) { continue }
+        $lines += if ($null -eq $have) { "  $n - requested for every user (could not be checked)" }
+                  elseif ($have -match [regex]::Escape($n)) { "  $n - added for every user" }
+                  else { "  $n - NOT added (print server not reachable, or a Point and Print policy blocks it)" }
+    }
+    try {
+        if ($pc) { Get-Service -ComputerName $pc -Name Spooler -ErrorAction Stop | Restart-Service -Force -ErrorAction Stop }
+        else { Restart-Service -Name Spooler -Force -ErrorAction Stop }
+    } catch { $lines += "  (print spooler not restarted: $($_.Exception.Message) - the printers appear after the PC restarts)" }
+    $lines
+}
 # Printer carry-over with Windows' own Printer Migration tool (PrintBrm): queues + drivers + ports + settings.
 # -Backup: from this PC or \\Computer into $File. -Restore: $File onto this PC or \\Computer (existing printers are kept,
 # not overwritten). Returns @{ Ok; Output }.

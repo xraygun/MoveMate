@@ -10,10 +10,13 @@ MoveMate copies users' files from an OLD PC to a NEW PC. Nothing is installed: c
 2. Section 1: pick HOW the files move (Network / Direct cable / External drive / Server offload) and which PC this is
    (the OLD PC or the NEW PC).
 3. Section 2: Scan profiles, tick who to copy, check "Copy into".
+   Not sure which way to copy yet? 'Sizes on this PC' (section 2) measures this PC's profiles right away - nothing
+   else to fill in - and gives rough copy times for cable/network, Wi-Fi and an external drive.
 4. Sections 3-5: what to copy, where it goes on the new PC, large files.
 5. Preview (optional), then Start copy.
 
 EJECT the flash drive before unplugging it.
+Small or scaled screen (e.g. 150%)? The window fits the screen and scrolls; drag its edge or maximize it to see more.
 
 == One stick for both PCs ==
 Click 'Run from this PC (free the stick)' (top right) once the window is open. The tool is copied to
@@ -134,13 +137,18 @@ Section 3, 'Settings & lists' (the dropdown picks which). Files land in the user
 - Sticky Notes: copied; with "same folders" they are put where Sticky Notes reads them (only if the new PC has no
   notes yet), otherwise the copy waits in Migrated Settings.
 - Desktop wallpaper: their old desktop picture (right-click > Set as desktop background).
-- Network drives + printer connections: LISTED on the user's receipt (not moved), e.g. H: \\server\home\jsmith.
+- Network drives + printer connections: LISTED on the user's receipt, e.g. H: \\server\home\jsmith (drives are not
+  moved; print-server printers are, with 'Printers: carry over' below).
 - Application inventory for IT: the old PC's installed programs (Windows' own parts left out) and printers with IP address and
   driver - a searchable page "Application inventory - <OLDPC>.html" (+ .json) in the run's logs and in your IT report. Each program links
   to a web search for its download, and to your Installers list when it is in there.
-- Printers: carry over (OFF by default - it installs drivers): Windows' Printer Migration tool (PrintBrm) backs up the
-  old PC's printers with drivers, ports and settings and restores them on the new PC. Printers already on the new PC
-  are kept. Drive/server: the backup travels with the copy and is restored at Import/Download (tick it there too).
+- Printers: carry over (ON by default - it installs drivers), for EVERY user of the new PC:
+  - The old PC's printers: Windows' Printer Migration tool (PrintBrm) backs them up with drivers, ports and settings
+    and restores them on the new PC. They belong to the PC, so every account there has them.
+  - The copied users' print-server printers (\\server\printer): added on the new PC for every user - each account gets
+    them at its next sign-in (the print server must be reachable then). The log lists each one.
+  Nobody's files need copying for this: a local account that was never copied gets them too. Printers already on the new PC
+  are kept. Drive/server: the backup travels with the copy and is used at Import/Download (keep it ticked there).
   If a printer doesn't come over, the inventory has its name, IP and driver (e.g. run Kyocera's installer).
 
 == Check before start and Retry ==
