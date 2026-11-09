@@ -74,6 +74,13 @@ When done: set IPv4 back to "Obtain an IP address automatically" (or what you wr
 OLD PC: How = External drive -> Browse to the drive (MoveMate creates PCMigration-<OLDPC> on it) -> Start.
 NEW PC: How = External drive -> Browse to that folder -> Scan -> Start.
 
+The OLD PC's own disk (it won't start, or you took the drive out - in a USB enclosure or dock): on the NEW PC,
+How = External drive, This PC is = NEW PC, Browse to the disk (its drive letter, its Users folder or a user's folder)
+-> Scan -> Start. MoveMate reads its Users folder directly, in backup mode: no need to take ownership or 'get access'
+to the folders first (that changes the old disk's permissions). Picked OLD PC by mistake? MoveMate notices the disk
+and offers to switch. Printers: the copied users' print-server printers are added for every user; printers that were
+installed on the old PC itself can't come from a disk - the Application inventory of a working PC lists them.
+
 == Server offload ==
 The old and new PC never need to be on at the same time.
 OLD PC: How = Server offload. Type or Browse to a server folder (\\server\share\folder). Connect... logs in with your

@@ -938,7 +938,7 @@ $hints = @{
     Push    = 'Type the NEW PC''s name, then Connect... (your admin login) and Test. Not working? On the NEW PC click Allow access and use its code here.'
     Pull    = 'Type the OLD PC''s name, then Connect... (your admin login) and Test. Not working? On the OLD PC click Allow access and use its code here.'
     Export  = 'Plug in the external drive and Browse to it. A PCMigration-<this PC> folder is created on it. Then Scan profiles.'
-    Import  = 'Browse to the external drive (or its PCMigration-<OLD PC> folder). Then Scan profiles.'
+    Import  = 'Browse to the external drive (or its PCMigration-<OLD PC> folder) - or to the OLD PC''s own disk in a USB enclosure or dock. Then Scan profiles.'
     Upload  = 'Type or Browse to the server folder (\\server\share\folder; Connect... = your admin login). A <this PC>_<date> package is made there. Pick Protection, then Scan profiles.'
     Download = 'Double-click the "Restore <OLD PC>" key on your stick (opens and unlocks by itself), or Browse to the <OLD PC>_<date> package on the server. Then Scan profiles.'
     Cable   = '1) Open this tool on BOTH PCs while still on the network (Windows checks your admin login).  2) Click Start cable link on both - it waits for you to connect the two PCs with one Ethernet cable.  3) They find and connect to each other by themselves; then Scan profiles on the PC you work from.'
@@ -981,8 +981,22 @@ function Update-ModeUi {
     if ($script:locked) { foreach ($c in $form.Controls) { if ($c -ne $btnWalk -and $c -ne $txtLog) { $c.Enabled = $false } }; $btnWalk.Enabled = $true }
 }
 
+# Another PC's Windows disk (not this PC's own drive): the root that holds its Users and Windows folders, whether the
+# drive, its Users folder or a user folder inside was picked. $null = not one (e.g. a PCMigration-<OLDPC> export).
+function Get-OldPcDisk([string]$Dir) {
+    $up = { param($p) if (-not $p -or $p -match '^[A-Za-z]:$') { '' } else { (Split-Path $p).TrimEnd('\') } }
+    $d = $Dir.TrimEnd('\'); $parent = & $up $d; $grand = & $up $parent
+    $leaf = { param($p) if ($p -and $p -notmatch '^[A-Za-z]:$') { Split-Path $p -Leaf } else { '' } }
+    foreach ($c in @(@($d, $true), @($parent, ((& $leaf $d) -eq 'Users')), @($grand, ((& $leaf $parent) -eq 'Users')))) {
+        $root = $c[0]
+        if (-not $root -or -not $c[1] -or $root -eq $env:SystemDrive) { continue }
+        if ((Test-Path -LiteralPath "$root\Users") -and (Test-Path -LiteralPath "$root\Windows")) { return $root }
+    }
+    $null
+}
 # Src/Dst roots for the current mode, or $null (after a message).
 function Get-Roots {
+    $env:MOVEMATE_BACKUP_MODE = $null   # robocopy backup mode: only while the source is another PC's disk (below)
     if ($SourceRoot -and $DestRoot) { return @{ Src = $SourceRoot; Dst = $DestRoot; Remote = $DestRoot; Other = 'TEST'; Mode = 'Push' } }
     $mode = Get-Mode
     $local = $env:SystemDrive
@@ -1014,9 +1028,20 @@ function Get-Roots {
         $dir = $txtDrive.Text.Trim().TrimEnd('\')
         if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { [void][Windows.Forms.MessageBox]::Show('Pick the external drive or folder first (Browse...).', $MigToolName); return $null }
         if ($dir -eq $local) { [void][Windows.Forms.MessageBox]::Show('That is this PC''s own drive. Pick the external drive.', $MigToolName); return $null }
+        # The OLD PC's own disk (in a USB enclosure or dock): picked as the drive, its Users folder or a user folder in it
+        $disk = Get-OldPcDisk $dir
         if ($mode -eq 'Export') {
+            if ($disk -and [Windows.Forms.MessageBox]::Show("$dir looks like another PC's Windows disk (it has Windows and Users folders).`r`n`r`nCopy FROM it to this PC?`r`nYes = switch to 'This PC is: NEW PC' and read its profiles`r`nNo = keep copying this PC's files TO it", $MigToolName, 'YesNo', 'Question') -eq 'Yes') {
+                $rbNew.Checked = $true; $txtDrive.Text = $disk
+                return Get-Roots
+            }
             $root = Join-Path $dir "PCMigration-$env:COMPUTERNAME"
             return @{ Src = $local; Dst = $root; Remote = $root; Other = 'drive'; Mode = $mode }
+        }
+        if ($disk) {
+            if ($disk -ne $dir) { $txtDrive.Text = $disk }
+            $env:MOVEMATE_BACKUP_MODE = '1'
+            return @{ Src = $disk; Dst = $local; Remote = $disk; Other = 'drive'; Mode = $mode; Disk = $true }
         }
         $root = $dir
         if (-not (Test-Path -LiteralPath (Join-Path $root 'Users'))) {
@@ -1722,7 +1747,7 @@ $btnScan.Add_Click({
     # @( ) around the whole if: one profile alone would come back as a bare object, which has no .Count in PowerShell 5.1
     $profiles = @(if ($hdr -and $hdr.Protection -ne 'None') { $hdr.Users | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Path = ''; LastUsed = [datetime]$hdr.Created } } }
                   else { Get-MigrationProfiles $srcUsers })
-    if (-not $profiles.Count) { Write-Log "No user profiles found in $srcUsers (wrong PC/folder, or no access - try Test)."; return }
+    if (-not $profiles.Count) { Write-Log "No user profiles found in $srcUsers (wrong PC/folder, or no access - try Test).$(if ($r.Mode -eq 'Export') { " Copying FROM an external drive or another PC's disk? Pick 'This PC is: NEW PC'." })"; return }
     $dstUsers = Join-Path $r.Dst 'Users'
     $dstOk = (-not $sending) -and (Test-Path -LiteralPath $dstUsers)
     # "Copy into": the user's profile on the new PC if it exists, else their user name (jsmith.DOMAIN -> jsmith).
@@ -1754,7 +1779,7 @@ $btnScan.Add_Click({
         }
         if ($told.Count) { Write-Log "Copy into, as picked on the old PC: $($told -join '; '). Click a blue name to change." }
     }
-    Write-Log "Found $($profiles.Count) profile(s) in $(if ($hdr) { 'the package' } else { $srcUsers })."
+    Write-Log "Found $($profiles.Count) profile(s) in $(if ($hdr) { 'the package' } else { $srcUsers })$(if ($r.Disk) { " - the old PC's own disk" })."
 })
 
 function Get-MaxBytes { if ($rbDrive.Checked -or $rbServer.Checked -or -not $cbLarge.Checked) { $NoLimit } else { [long]$numMax.Value * 1MB } }
@@ -2539,7 +2564,13 @@ function Move-Printers($r, [string]$RunDir, [string[]]$Users) {
     $file = Join-Path $RunDir 'printers.printerExport'
     $connFile = Join-Path $RunDir 'printer-connections.txt'
     $notes = @()
-    if ($r.Mode -in 'Import', 'Download') {
+    if ($r.Disk) {
+        # The old PC's own disk: its installed printers need that Windows running (PrintBrm), but its users' print-server
+        # printers are in their profiles - added for every user below
+        $conn = @(Get-ProfilePrinterConnections (Join-Path $r.Src 'Users') $Users)
+        if (-not $conn.Count) { Write-Log 'Printers: no print-server printers in the copied profiles (an old disk can''t carry the printers installed on that PC).'; return '' }
+        Set-Content -LiteralPath $connFile -Value $conn -Encoding UTF8; Write-Log "Print-server printers of the copied users: $($conn -join ', ')"
+    } elseif ($r.Mode -in 'Import', 'Download') {
         $cb = Join-Path $r.Src 'printers.printerExport'; $cc = Join-Path $r.Src 'printer-connections.txt'
         if (-not (Test-Path -LiteralPath $cb) -and -not (Test-Path -LiteralPath $cc)) { Write-Log 'Printers: no printer backup came with this copy (tick it on the old PC).'; return '' }
         if (Test-Path -LiteralPath $cb) { Copy-Item -LiteralPath $cb $file -Force }
