@@ -226,6 +226,34 @@ $howTips.SetToolTip($rbServer, "OLD PC: upload to a server share (optionally enc
 $pnlRole = Add-Ctl Panel @{ Location = (P 100 56); Size = (S 790 26) }
 $rbOld = Add-Ctl RadioButton @{ Text = 'the OLD PC (send files)'; Location = (P 0 3); AutoSize = $true; Checked = $true } $pnlRole
 $rbNew = Add-Ctl RadioButton @{ Text = 'the NEW PC (receive files)'; Location = (P 240 3); AutoSize = $true } $pnlRole
+# Sending from a bench PC: the OLD PC's own disk (an old SSD in a USB enclosure or dock) instead of this PC's C:. Its
+# profiles are read in backup mode and sent on as usual - straight to the new PC, to a drive or to a server.
+$script:srcDisk = $null; $script:srcName = ''
+function Get-SourcePcName { if ($script:srcDisk -and $rbOld.Checked) { $script:srcName } else { $env:COMPUTERNAME } }
+$lnkFrom = Add-Ctl LinkLabel @{ Text = 'Files from: this PC  - change'; Location = (P 470 3); AutoSize = $true; LinkBehavior = 'HoverUnderline' } $pnlRole
+function Set-SourceDisk([string]$Root) {
+    $script:srcDisk = $(if ($Root) { $Root } else { $null }); $script:srcName = ''; $script:pkgName = $null   # upload package name follows the source PC
+    if ($Root) {
+        $n = Get-DiskPcName $Root
+        $script:srcName = if ($n) { $n } else { 'OLD-DISK' }
+        Write-Log "Files from: $($script:srcName)'s disk ($Root) - its profiles are sent, not this PC's.$(if (-not $n) { ' (Its PC name could not be read, so it is called OLD-DISK.)' })"
+    }
+    $lnkFrom.Text = if ($Root) { "Files from: $($script:srcName)'s disk ($Root)  - change" } else { 'Files from: this PC  - change' }
+    $grid.Rows.Clear()
+}
+$lnkFrom.Add_LinkClicked({
+    $m = New-Object Windows.Forms.ContextMenuStrip
+    $a = $m.Items.Add("This PC ($env:COMPUTERNAME)"); $a.Add_Click({ Set-SourceDisk '' })
+    $b = $m.Items.Add("The OLD PC's own disk (e.g. its SSD in a USB enclosure)...")
+    $b.Add_Click({
+        $f = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = "The OLD PC's disk: its drive letter (or its Users folder)" }
+        if ($f.ShowDialog($form) -ne 'OK') { return }
+        $d = Get-OldPcDisk $f.SelectedPath
+        if (-not $d) { [void][Windows.Forms.MessageBox]::Show("$($f.SelectedPath) is not another PC's Windows disk (it needs both a Windows and a Users folder - and it can't be this PC's own drive).", $MigToolName); return }
+        Set-SourceDisk $d
+    })
+    $m.Show($lnkFrom, (P 0 $lnkFrom.Height))
+})
 
 $lblPcName = Add-Ctl Label @{ Text = 'Other PC name/IP:'; Location = (P 24 93); AutoSize = $true }
 $txtPc = Add-Ctl TextBox @{ Location = (P 135 90); Size = (S 150 23) }
@@ -263,11 +291,14 @@ $btnScan = Add-Ctl Button @{ Text = 'Scan profiles'; Location = (P 785 182); Siz
 # copy, per profile, with rough copy times - to choose between network, cable, external drive or server. Read-only.
 $btnSizes = Add-Ctl Button @{ Text = 'Sizes on this PC'; Location = (P 668 182); Size = (S 112 26) }
 $btnSizes.Add_Click({
-    $users = Join-Path $env:SystemDrive 'Users'
+    # 'Files from' the old PC's disk (OLD PC side): measure that disk instead, in backup mode
+    $onDisk = $script:srcDisk -and $rbOld.Checked
+    $users = Join-Path $(if ($onDisk) { $script:srcDisk } else { $env:SystemDrive }) 'Users'
+    $env:MOVEMATE_BACKUP_MODE = $(if ($onDisk) { '1' } else { $null })
     $profiles = @(Get-MigrationProfiles $users)
     if (-not $profiles.Count) { Write-Log "No user profiles found in $users."; return }
     Set-Busy $true
-    Write-Log "== Profile sizes on $env:COMPUTERNAME (the folders ticked in section 3; Cancel stops):"
+    Write-Log "== Profile sizes on $(if ($onDisk) { "$(Get-SourcePcName)'s disk ($($script:srcDisk))" } else { $env:COMPUTERNAME }) (the folders ticked in section 3; Cancel stops):"
     $total = [long]0; $files = 0
     foreach ($p in $profiles) {
         if ($script:cancel) { break }
@@ -969,6 +1000,7 @@ function Update-ModeUi {
     $pnlLayout.Enabled = -not $sending
     foreach ($c in $rbIntoProfile, $rbMigration) { $c.Enabled = -not $sending -and -not $rbAsk.Checked }   # Ask = always via C:\Migration
     foreach ($c in $btnScan, $btnSizes, $btnPreview, $btnStart) { $c.Enabled = $idle }
+    $lnkFrom.Visible = $rbOld.Checked
     foreach ($c in $pnlHow, $pnlRole) { $c.Enabled = $idle -and -not $script:cableOn -and -not $script:hostOn }
     if (-not $script:cableOn -and -not $script:hostOn -and -not $script:busy) {
         if ($cable -and $script:fromNetwork -and -not $script:runningLocal) { Set-Conn 'This tool is running from the network share, which is gone once you switch to the cable. Click "Run from this PC (works offline)" (top right) first, on BOTH PCs.' 'DarkOrange' }
@@ -1000,6 +1032,11 @@ function Get-Roots {
     if ($SourceRoot -and $DestRoot) { return @{ Src = $SourceRoot; Dst = $DestRoot; Remote = $DestRoot; Other = 'TEST'; Mode = 'Push' } }
     $mode = Get-Mode
     $local = $env:SystemDrive
+    # Sending (OLD PC side): from this PC's C:, or from the old PC's own disk picked under 'Files from'
+    $fromDisk = [bool]$script:srcDisk -and $mode -in 'Push', 'Export', 'Upload'
+    if ($fromDisk -and -not (Test-Path -LiteralPath (Join-Path $script:srcDisk 'Users'))) { [void][Windows.Forms.MessageBox]::Show("The old PC's disk ($($script:srcDisk)) is not there any more. Plug it in, or set 'Files from' again.", $MigToolName); return $null }
+    $srcRoot = if ($fromDisk) { $script:srcDisk } else { $local }
+    if ($fromDisk) { $env:MOVEMATE_BACKUP_MODE = '1' }
     if ($mode -eq 'Upload' -or $mode -eq 'Download') {
         $dir = $txtDrive.Text.Trim().TrimEnd('\')
         if (-not $dir) { [void][Windows.Forms.MessageBox]::Show('Type or Browse to the server folder first (\\server\share\folder).', $MigToolName); return $null }
@@ -1009,9 +1046,9 @@ function Get-Roots {
         if ($mode -eq 'Upload') {
             if ($dir -like "$local*") { [void][Windows.Forms.MessageBox]::Show('That is on this PC''s own drive. Pick a folder on the server.', $MigToolName); return $null }
             if (Test-Path -LiteralPath (Join-Path $dir $PkgHeader)) { [void][Windows.Forms.MessageBox]::Show('That folder is an upload package. Pick the folder it is in.', $MigToolName); return $null }
-            if (-not $script:pkgName) { $script:pkgName = '{0}_{1}' -f $env:COMPUTERNAME, (Get-Date -Format 'yyyy-MM-dd_HHmm') }
+            if (-not $script:pkgName) { $script:pkgName = '{0}_{1}' -f (Get-SourcePcName), (Get-Date -Format 'yyyy-MM-dd_HHmm') }
             $pkg = Join-Path $dir $script:pkgName
-            return @{ Src = $local; Dst = $pkg; Remote = $pkg; Other = $srv; Mode = $mode; Server = $dir }
+            return @{ Src = $srcRoot; Dst = $pkg; Remote = $pkg; Other = $srv; Mode = $mode; Server = $dir; Disk = $fromDisk }
         }
         # Download: the package itself, or the folder holding exactly one
         $pkg = $dir
@@ -1031,12 +1068,14 @@ function Get-Roots {
         # The OLD PC's own disk (in a USB enclosure or dock): picked as the drive, its Users folder or a user folder in it
         $disk = Get-OldPcDisk $dir
         if ($mode -eq 'Export') {
-            if ($disk -and [Windows.Forms.MessageBox]::Show("$dir looks like another PC's Windows disk (it has Windows and Users folders).`r`n`r`nCopy FROM it to this PC?`r`nYes = switch to 'This PC is: NEW PC' and read its profiles`r`nNo = keep copying this PC's files TO it", $MigToolName, 'YesNo', 'Question') -eq 'Yes') {
-                $rbNew.Checked = $true; $txtDrive.Text = $disk
-                return Get-Roots
+            if ($fromDisk -and $dir -like "$($script:srcDisk)*") { [void][Windows.Forms.MessageBox]::Show("That is the old PC's disk you are copying FROM. Browse to where the copy should go: another drive, or a folder on this PC.", $MigToolName); return $null }
+            if ($disk -and -not $fromDisk) {
+                $ans = [Windows.Forms.MessageBox]::Show("$dir looks like another PC's Windows disk (it has Windows and Users folders).`r`n`r`nYes = copy its users' files INTO THIS PC (This PC is: NEW PC)`r`nNo = take its files and send them on from here (Files from: that disk) - then Browse to where they go`r`nCancel = copy THIS PC's files TO it", $MigToolName, 'YesNoCancel', 'Question')
+                if ($ans -eq 'Yes') { $rbNew.Checked = $true; $txtDrive.Text = $disk; return Get-Roots }
+                if ($ans -eq 'No') { Set-SourceDisk $disk; $txtDrive.Text = ''; [void][Windows.Forms.MessageBox]::Show("Files from: $($script:srcName)'s disk. Now Browse to where the copy should go (another drive, or a folder on this PC), then Scan profiles.", $MigToolName); return $null }
             }
-            $root = Join-Path $dir "PCMigration-$env:COMPUTERNAME"
-            return @{ Src = $local; Dst = $root; Remote = $root; Other = 'drive'; Mode = $mode }
+            $root = Join-Path $dir "PCMigration-$(Get-SourcePcName)"
+            return @{ Src = $srcRoot; Dst = $root; Remote = $root; Other = 'drive'; Mode = $mode; Disk = $fromDisk }
         }
         if ($disk) {
             if ($disk -ne $dir) { $txtDrive.Text = $disk }
@@ -1056,7 +1095,7 @@ function Get-Roots {
     if ($pc -eq $env:COMPUTERNAME) { [void][Windows.Forms.MessageBox]::Show('That is this PC. Type the OTHER PC''s name.', $MigToolName); return $null }
     $share = $txtShare.Text.Trim().Trim('\'); if (-not $share) { $share = 'C$' }
     $remote = "\\$pc\$share"
-    if ($mode -eq 'Push') { return @{ Src = $local; Dst = $remote; Remote = $remote; Other = $pc; Mode = $mode } }
+    if ($mode -eq 'Push') { return @{ Src = $srcRoot; Dst = $remote; Remote = $remote; Other = $pc; Mode = $mode; Disk = $fromDisk } }
     return @{ Src = $remote; Dst = $local; Remote = $remote; Other = $pc; Mode = $mode }
 }
 
@@ -1908,7 +1947,7 @@ function Get-DownloadKeys($Hdr) {
 # After an upload: 'Restore <OLDPC> <date>.key' + '.cmd' (same name). The .cmd finds the tool (this stick, any drive, or
 # the copy on C:) and opens it on the NEW PC ready to download - and, for Key protection, to unlock - that package.
 function Save-RestoreKey([string]$Pkg, [string]$Protection, [byte[]]$Master, [string[]]$Users, [switch]$Auto) {
-    $name = "Restore $env:COMPUTERNAME $(Get-Date -Format 'yyyy-MM-dd HHmm')"
+    $name = "Restore $(Get-SourcePcName) $(Get-Date -Format 'yyyy-MM-dd HHmm')"
     $kd = Join-Path $script:toolDir 'keys'
     if (-not $script:runningLocal) { New-Item -ItemType Directory -Force $kd -ErrorAction SilentlyContinue | Out-Null }
     if ($Auto) {
@@ -1927,11 +1966,11 @@ function Save-RestoreKey([string]$Pkg, [string]$Protection, [byte[]]$Master, [st
     } }
     $keyFile = $d.FileName; $cmd = [IO.Path]::ChangeExtension($keyFile, '.cmd')
     [ordered]@{ Format = 'MigrateUserFiles-Key'; Version = 1; Package = $Pkg; Protection = $Protection
-        Key = $(if ($Protection -eq 'Key') { [Convert]::ToBase64String($Master) } else { '' }); OldPC = $env:COMPUTERNAME; Users = $Users; Created = (Get-Date).ToString('s') } |
+        Key = $(if ($Protection -eq 'Key') { [Convert]::ToBase64String($Master) } else { '' }); OldPC = (Get-SourcePcName); Users = $Users; Created = (Get-Date).ToString('s') } |
         ConvertTo-Json | Set-Content -LiteralPath $keyFile -Encoding UTF8
     $c = @(
         '@echo off'
-        "rem Restore $env:COMPUTERNAME's files ($MigToolName, server offload). Double-click on the NEW PC: opens the tool"
+        "rem Restore $(Get-SourcePcName)'s files ($MigToolName, server offload). Double-click on the NEW PC: opens the tool"
         "rem ready to download $Pkg$(if ($Protection -eq 'Key') { ' and unlock it. KEEP PRIVATE: with the .key next to it, it opens the upload.' } else { '.' })"
         'set "KEY=%~dpn0.key"'
         'set "PS1="'
@@ -1948,7 +1987,7 @@ function Save-RestoreKey([string]$Pkg, [string]$Protection, [byte[]]$Master, [st
 
 # Step-by-step restore instructions for an upload (popup on the old PC + 'HOW TO RESTORE.txt' in the package). No secrets.
 function Get-RestoreInstructions([string]$Pkg, [string]$Protection, [string]$KeyCmd) {
-    $old = $env:COMPUTERNAME
+    $old = Get-SourcePcName
     $unlock = @{ None = ''; Key = ' and unlocks it'; Password = '' }[$Protection]
     $L = @("HOW TO RESTORE $old's FILES ON THE NEW PC", '', "Upload: $Pkg", "Protection: $(@{ None = 'none (not encrypted)'; Key = 'AES-256, restore key file'; Password = 'AES-256, password' }[$Protection])", '')
     if ($KeyCmd) {
@@ -2071,7 +2110,7 @@ function Invoke-StartCopy([bool]$Walk) {
     }
 
     Set-Busy $true; $script:cancel = $false
-    $from = if ($r.Mode -in 'Push', 'Export', 'Upload') { $env:COMPUTERNAME } else { $r.Other }
+    $from = if ($r.Mode -in 'Push', 'Export', 'Upload') { Get-SourcePcName } else { $r.Other }
     $toPc = if ($r.Mode -in 'Pull', 'Import', 'Download') { $env:COMPUTERNAME } else { $r.Other }
     if ($from -match '^\d+\.\d+\.\d+\.\d+$') { $n = Get-RemoteName $from; if ($n) { $from = $n } }   # cable: names, not 10.99.99.x
     if ($toPc -match '^\d+\.\d+\.\d+\.\d+$') { $n = Get-RemoteName $toPc; if ($n) { $toPc = $n } }
@@ -2114,7 +2153,7 @@ function Invoke-StartCopy([bool]$Walk) {
         foreach ($row in $rows) { $row.Cells[4].Value = 'waiting...' }
         $up = @(foreach ($n in $userNames) { $src = Join-Path (Join-Path $r.Src 'Users') $n; @{ Name = $n; Folders = @(Get-FolderList $src); Bookmarks = @(Get-SelectedBookmarks); Settings = @(Get-SelectedSettings) } })
         Write-Log "== Encrypting + uploading $($userNames -join ', ') to $($r.Dst)"
-        $job = Invoke-PkgJob -Verb 'Encrypting + uploading' -ArgList @($r.Src, $r.Dst, $up, $keys, $prot, $salt, $env:COMPUTERNAME, $runDir) -Script {
+        $job = Invoke-PkgJob -Verb 'Encrypting + uploading' -ArgList @($r.Src, $r.Dst, $up, $keys, $prot, $salt, (Get-SourcePcName), $runDir) -Script {
             param($core, $sync, $srcRoot, $pkg, $users, $keys, $prot, $salt, $oldPc, $logDir)
             . $core
             Export-PkgEncrypted -SrcRoot $srcRoot -PkgDir $pkg -Users $users -Keys $keys -Protection $prot -Salt $salt -OldPc $oldPc -LogDir $logDir -Sync $sync
@@ -2312,7 +2351,7 @@ function Invoke-StartCopy([bool]$Walk) {
         if ($q.Ok -and $q.Output) { $there = @($q.Output)[-1] }
     }
     if ($r.Mode -eq 'Download') { $there = [pscustomobject]@{ Model = "$($hdr.OldPCModel)"; Windows = "$($hdr.OldPCWindows)" } }   # noted at upload
-    $oldInfo = if ($r.Mode -in 'Push', 'Export', 'Upload') { $here } else { $there }
+    $oldInfo = if ($r.Disk -and $r.Mode -in 'Push', 'Export', 'Upload') { [pscustomobject]@{ Model = ''; Windows = '' } } elseif ($r.Mode -in 'Push', 'Export', 'Upload') { $here } else { $there }
     $newInfo = if ($r.Mode -in 'Pull', 'Import', 'Download') { $here } else { $there }
     $extra.OldPCModel = $oldInfo.Model; $extra.OldPCWindows = $oldInfo.Windows; $extra.NewPCModel = $newInfo.Model; $extra.NewPCWindows = $newInfo.Windows
     $extra.Layout = if ($sending) { '' } elseif ($ask) { 'Ask user' } elseif ($layout -eq 'Backup') { "Desktop folder ($($script:backupName))" } elseif ($layout -eq 'Other') { "Other ($($script:otherPath))" } else { 'Same folders' }
@@ -2339,14 +2378,14 @@ function Invoke-StartCopy([bool]$Walk) {
         $hf = Join-Path $r.Dst $PkgHeader
         try {
             if (-not $enc) {
-                [ordered]@{ Format = 'MigrateUserFiles-Package'; Version = 1; Protection = 'None'; Salt = ''; Verifier = ''; OldPC = $env:COMPUTERNAME; Created = $t0.ToString('s')
+                [ordered]@{ Format = 'MigrateUserFiles-Package'; Version = 1; Protection = 'None'; Salt = ''; Verifier = ''; OldPC = (Get-SourcePcName); Created = $t0.ToString('s')
                     Complete = -not ($script:cancel -or @($results | Where-Object Cancelled).Count)
                     Users = @($results | ForEach-Object { [ordered]@{ Name = $_.Profile; Files = $_.Files; Bytes = $_.Bytes; Failed = $_.FailedFiles } })
                     FileCount = $stats.Files; TotalBytes = $stats.DataBytes } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $hf -Encoding UTF8 -ErrorAction Stop
             }
             $h = Get-Content -LiteralPath $hf -Raw -Encoding UTF8 | ConvertFrom-Json
-            $h | Add-Member -NotePropertyName OldPCModel -NotePropertyValue $here.Model -Force
-            $h | Add-Member -NotePropertyName OldPCWindows -NotePropertyValue $here.Windows -Force
+            $h | Add-Member -NotePropertyName OldPCModel -NotePropertyValue $oldInfo.Model -Force
+            $h | Add-Member -NotePropertyName OldPCWindows -NotePropertyValue $oldInfo.Windows -Force
             $h | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $hf -Encoding UTF8 -ErrorAction Stop
         } catch { Write-Log "! Package header not written ($($_.Exception.Message)) - the NEW PC can't open this upload. Upload again." }
         if ((Test-Path -LiteralPath $hf) -and $stats.Result -ne 'CANCELLED') {
@@ -2423,7 +2462,7 @@ function Invoke-StartCopy([bool]$Walk) {
         elseif ($script:walkAuto.Close) { Write-Log "Walk away: NOT closing by itself - the transfer finished with $($stats.Result)." }
     } else {
         [void][Windows.Forms.MessageBox]::Show($sum, $MigToolName)
-        if ($r.Mode -eq 'Upload' -and $howTo) { Show-Instructions "How to restore $env:COMPUTERNAME's files" $howTo }
+        if ($r.Mode -eq 'Upload' -and $howTo) { Show-Instructions "How to restore $(Get-SourcePcName)'s files" $howTo }
     }
     if ($r.Mode -eq 'Upload' -and $howTo) { Write-Log $howTo }   # walk-away: in the log (and on the server) for after unlocking
 }
@@ -2447,7 +2486,8 @@ function Get-Preflight($r, [string[]]$Users) {
     $res = @{ Lines = @(); Stop = $null; Meas = $null }
     $act = @()
     try {
-        if ($r.Mode -in 'Push', 'Export', 'Upload' -and $r.Other -ne 'TEST') { $act = @(Get-SourceActivity) }
+        if ($r.Disk) { }   # the old PC's own disk: nobody is signed in on it, nothing is open
+        elseif ($r.Mode -in 'Push', 'Export', 'Upload' -and $r.Other -ne 'TEST') { $act = @(Get-SourceActivity) }
         elseif ($r.Mode -eq 'Pull' -and $r.Other -ne 'TEST') {
             $q = Invoke-Bg -Script { param($core, $pc, $cred) . $core; Get-SourceActivity -Computer $pc -Credential $cred } -ArgList @($r.Other, $script:remoteCred) -TimeoutSec 25 -Status "Checking $($r.Other)"
             if ($q.Ok) { $act = @($q.Output | Where-Object { $_.App }) }
@@ -2455,7 +2495,7 @@ function Get-Preflight($r, [string[]]$Users) {
     } catch {}
     $sel = @($Users | ForEach-Object { Get-HandoffUser $_ })
     $mine = @($act | Where-Object { $_.User -and $sel -contains (Get-HandoffUser $_.User) })
-    $old = if ($r.Mode -in 'Push', 'Export', 'Upload') { $env:COMPUTERNAME } else { $r.Other }
+    $old = if ($r.Mode -in 'Push', 'Export', 'Upload') { Get-SourcePcName } else { $r.Other }
     foreach ($u in @($mine | Where-Object { $_.App -eq 'explorer.exe' } | ForEach-Object User | Sort-Object -Unique)) {
         $res.Lines += "$u is signed in on $old - files can change while copying. Best: they save their work and sign out."
     }
@@ -2520,6 +2560,7 @@ function Copy-ExtraFolders($r, [string]$RunDir) {
 # Old PC = this PC (Push/Export/Upload), the other one (Pull, DCOM), or the lists saved with a drive/server copy
 # (software.csv / printers.csv). Writes "Application inventory - <OLDPC>.html" into the run's logs (also sent with the IT report).
 function Save-PcInventory($r, [string]$RunDir, [string]$OldPc) {
+    if ($r.Disk -and $r.Mode -in 'Push', 'Export', 'Upload') { Write-Log "Application inventory: not available from the old PC's disk (it needs that PC's Windows running)."; return '' }
     $sw = $null; $pr = @()
     try {
         if ($r.Mode -in 'Push', 'Export', 'Upload') {
@@ -2570,6 +2611,10 @@ function Move-Printers($r, [string]$RunDir, [string[]]$Users) {
         $conn = @(Get-ProfilePrinterConnections (Join-Path $r.Src 'Users') $Users)
         if (-not $conn.Count) { Write-Log 'Printers: no print-server printers in the copied profiles (an old disk can''t carry the printers installed on that PC).'; return '' }
         Set-Content -LiteralPath $connFile -Value $conn -Encoding UTF8; Write-Log "Print-server printers of the copied users: $($conn -join ', ')"
+        if ($r.Mode -in 'Export', 'Upload') {   # read on a bench PC: the list travels with the copy
+            Copy-Item -LiteralPath $connFile (Join-Path $r.Dst 'printer-connections.txt') -Force
+            return 'Printers: the print-server printers travel with the copy - added on the new PC for every user at Import/Download.'
+        }
     } elseif ($r.Mode -in 'Import', 'Download') {
         $cb = Join-Path $r.Src 'printers.printerExport'; $cc = Join-Path $r.Src 'printer-connections.txt'
         if (-not (Test-Path -LiteralPath $cb) -and -not (Test-Path -LiteralPath $cc)) { Write-Log 'Printers: no printer backup came with this copy (tick it on the old PC).'; return '' }

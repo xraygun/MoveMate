@@ -130,6 +130,22 @@ function Get-MigrationProfiles([string]$UsersRoot) {
         } | Sort-Object LastUsed -Descending
 }
 
+# The computer name of another PC's Windows disk (e.g. an old SSD on a USB enclosure), read from its own registry
+# (SYSTEM hive, loaded for a moment). '' when it can't be read.
+function Get-DiskPcName([string]$Root) {
+    $hive = Join-Path $Root 'Windows\System32\config\SYSTEM'
+    if (-not (Test-Path -LiteralPath $hive)) { return '' }
+    $key = 'KitMigSys_' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+    & reg.exe load "HKLM\$key" $hive 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { return '' }
+    try {
+        $cur = "$(& reg.exe query "HKLM\$key\Select" /v Current 2>$null)"
+        $set = if ($cur -match 'Current\s+REG_DWORD\s+0x([0-9a-fA-F]+)') { 'ControlSet{0:D3}' -f [Convert]::ToInt32($Matches[1], 16) } else { 'ControlSet001' }
+        $out = "$(& reg.exe query "HKLM\$key\$set\Control\ComputerName\ComputerName" /v ComputerName 2>$null)"
+        if ($out -match 'ComputerName\s+REG_SZ\s+(\S+)') { $Matches[1] } else { '' }
+    } finally { [gc]::Collect(); & reg.exe unload "HKLM\$key" 2>$null | Out-Null }
+}
+
 # Destination profile folder for a source profile: same name, or same base name ('jsmith' ~ 'jsmith.DOMAIN'). $null = not there yet.
 function Resolve-DestProfile([string]$DestUsersRoot, [string]$SourceName) {
     if (Test-Path -LiteralPath (Join-Path $DestUsersRoot $SourceName)) { return $SourceName }
