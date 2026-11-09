@@ -74,6 +74,18 @@ When done: set IPv4 back to "Obtain an IP address automatically" (or what you wr
 OLD PC: How = External drive -> Browse to the drive (MoveMate creates PCMigration-<OLDPC> on it) -> Start.
 NEW PC: How = External drive -> Browse to that folder -> Scan -> Start.
 
+The OLD PC's own disk (it won't start, or you took its SSD out - in a USB enclosure or dock). Two ways:
+- On the NEW PC: How = External drive, This PC is = NEW PC, Browse to the disk (its drive letter, its Users folder or
+  a user's folder) -> Scan -> Start. The files go straight into this PC's profiles.
+- On another PC (e.g. your bench PC), to send them on later: This PC is = OLD PC, click 'Files from: this PC - change'
+  > The OLD PC's own disk, pick the disk. Then use any How as usual - Network/Direct cable straight to the new PC,
+  External drive (Browse to another drive, or a folder on this PC) or Server offload. Its profiles are sent, named
+  after the old PC (read from the disk), not this one. 'Sizes on this PC' then measures the disk.
+MoveMate reads the disk's Users folder in backup mode: no need to take ownership or 'get access' to its folders first
+(that changes the old disk's permissions). Picked the disk as the drive to copy TO by mistake? MoveMate notices and asks.
+From a disk: the copied users' print-server printers are added for every user on the new PC. Printers installed on the
+old PC itself, and its Application inventory, need that PC's Windows running, so they can't come from a disk.
+
 == Server offload ==
 The old and new PC never need to be on at the same time.
 OLD PC: How = Server offload. Type or Browse to a server folder (\\server\share\folder). Connect... logs in with your

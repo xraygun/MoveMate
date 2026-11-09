@@ -6,7 +6,7 @@
 # Where the tool installs on a PC (relative to the drive root) and its scheduled task names - change here only.
 # Legacy: older versions used the names below; they're still recognized so pending handoffs keep working.
 $MigToolName = 'MoveMate'   # shown in instructions/messages (the launcher is "<name>.cmd")
-$MigToolVersion = '1.0.1'   # this copy's version - bump it with each GitHub release (tag v1.0.0); the update check compares to it
+$MigToolVersion = '1.0.2'   # this copy's version - bump it with each GitHub release (tag v1.0.0); the update check compares to it
 $MigUpdateRepo = 'xraygun/MoveMate'   # GitHub owner/repo the update check asks for its latest release
 $MigToolRel = 'Program Files\MoveMate'
 $MigLegacyToolRel = 'Program Files\MoveMate'
@@ -49,6 +49,10 @@ function Get-MigFilterOpts {
     $o = @('/XF') + $xf
     if ($xd.Count) { $o += @('/XD') + $xd }
     if ([int]$MigAdv.SkipOlderYears -gt 0) { $o += "/MAXAGE:$([int]$MigAdv.SkipOlderYears * 365)" }
+    # Reading another PC's disk: its folders' permissions name that PC's accounts, so this PC's admin can be refused.
+    # Backup mode (/B, an admin's backup right) reads them anyway, permissions untouched. The window sets this while the
+    # source is such a disk (Get-Roots); background jobs in this process see it too.
+    if ($env:MOVEMATE_BACKUP_MODE -eq '1') { $o += '/B' }
     $o
 }
 # Speed/retry options for the copy. A speed limit uses /IPG (pause between 64 KB blocks), which robocopy can't combine
@@ -115,8 +119,31 @@ function Get-MigrationProfiles([string]$UsersRoot) {
         ForEach-Object {
             $nt = Get-Item -LiteralPath (Join-Path $_.FullName 'NTUSER.DAT') -Force -ErrorAction SilentlyContinue
             if (-not $nt) { $nt = Get-Item -LiteralPath (Join-Path $_.FullName '_Migration-Report.txt') -Force -ErrorAction SilentlyContinue }
+            if (-not $nt) {
+                # Another PC's disk: NTUSER.DAT may be unreadable here (its permissions name that PC's accounts). A folder
+                # with the usual profile folders, or one this PC is refused, still counts - the copy reads it in backup mode.
+                $item = $_; $dir = $_.FullName; $denied = $false
+                try { [void][IO.Directory]::GetFileSystemEntries($dir) } catch [UnauthorizedAccessException] { $denied = $true } catch {}
+                if ($denied -or @('Desktop', 'Documents', 'AppData' | Where-Object { Test-Path -LiteralPath (Join-Path $dir $_) }).Count) { $nt = $item }
+            }
             if ($nt) { [pscustomobject]@{ Name = $_.Name; Path = $_.FullName; LastUsed = $nt.LastWriteTime } }
         } | Sort-Object LastUsed -Descending
+}
+
+# The computer name of another PC's Windows disk (e.g. an old SSD on a USB enclosure), read from its own registry
+# (SYSTEM hive, loaded for a moment). '' when it can't be read.
+function Get-DiskPcName([string]$Root) {
+    $hive = Join-Path $Root 'Windows\System32\config\SYSTEM'
+    if (-not (Test-Path -LiteralPath $hive)) { return '' }
+    $key = 'KitMigSys_' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+    & reg.exe load "HKLM\$key" $hive 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { return '' }
+    try {
+        $cur = "$(& reg.exe query "HKLM\$key\Select" /v Current 2>$null)"
+        $set = if ($cur -match 'Current\s+REG_DWORD\s+0x([0-9a-fA-F]+)') { 'ControlSet{0:D3}' -f [Convert]::ToInt32($Matches[1], 16) } else { 'ControlSet001' }
+        $out = "$(& reg.exe query "HKLM\$key\$set\Control\ComputerName\ComputerName" /v ComputerName 2>$null)"
+        if ($out -match 'ComputerName\s+REG_SZ\s+(\S+)') { $Matches[1] } else { '' }
+    } finally { [gc]::Collect(); & reg.exe unload "HKLM\$key" 2>$null | Out-Null }
 }
 
 # Destination profile folder for a source profile: same name, or same base name ('jsmith' ~ 'jsmith.DOMAIN'). $null = not there yet.
